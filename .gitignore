@@ -1,16 +1,40 @@
+# --------------------- Bütün Dosya Kuralları ---------------------
+
+# --- First Dosya ---
+
+# --- Textler/Documantasyonlar ---
+/Steps_Example
+# --- Keyler ---
+
+# --- Codlar ---
+
+# --- Datalar ---
+/Data
+
+# --- __ ---
+/Code/Hurriyet_Haber_wbsp/haber/haber/__pycache__
+/Code/Hurriyet_Haber_wbsp/haber/haber/__init__.py
+
+
+
+# --------------------- Hürriyet Projesi ---------------------
+
 # --- First Dosya ---
 
 # --- Textler/Documantasyonlar ---
 /Code/Hurriyet_Haber_wbsp/Learning.ipynb
-/Project_Main_Structure_Stages.ipynb
 # --- Keyler ---
 
 # --- Codlar ---
-/Code
+
 /Code/Hurriyet_Haber_wbsp/haber/scrapy.cfg
+
 # --- Datalar ---
-/Data
 
-
-
-
+# --- __ ---
+/Code/Hurriyet_Haber_wbsp/haber/haber/__pycache__
+/Code/Hurriyet_Haber_wbsp/haber/haber/__init__.py
+/Code/Hurriyet_Haber_wbsp/haber/haber/spiders/__pycache__
+/Code/Hurriyet_Haber_wbsp/haber/haber/spiders/__init__.py
+/Code/Hurriyet_Haber_wbsp/haber/haber/settings.py
+/Code/Hurriyet_Haber_wbsp/haber/haber/middlewares.py
