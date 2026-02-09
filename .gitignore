@@ -38,3 +38,22 @@
 /Code/Hurriyet_Haber_wbsp/haber/haber/spiders/__init__.py
 /Code/Hurriyet_Haber_wbsp/haber/haber/settings.py
 /Code/Hurriyet_Haber_wbsp/haber/haber/middlewares.py
+
+# --------------------- EnSonHaber Bot ---------------------
+
+# --- First Dosya ---
+
+# --- Textler/Documantasyonlar ---
+
+# --- Keyler ---
+
+# --- Codlar ---
+/Code/Enson_Haber_wbsp/ensonhaber_bot/settings.py
+# --- Datalar ---
+
+
+# --- __ ---
+/Code/Enson_Haber_wbsp/ensonhaber_bot/spiders/__init__.py
+/Code/Enson_Haber_wbsp/ensonhaber_bot/spiders/__pycache__
+/Code/Enson_Haber_wbsp/ensonhaber_bot/__init__.py
+/Code/Enson_Haber_wbsp/ensonhaber_bot/__pycache__
