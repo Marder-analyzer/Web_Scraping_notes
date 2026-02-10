@@ -1,4 +1,5 @@
 import scrapy
+import time
 from ..items import EnsonhaberBotItem
 from scrapy_playwright.page import PageMethod
 
@@ -6,8 +7,18 @@ class HaberlerSpider(scrapy.Spider):
     name = "haberler"
     allowed_domains = ["ensonhaber.com"]
 
+    def __init__(self, *args, **kwargs):
+        super(HaberlerSpider, self).__init__(*args, **kwargs)
+        self.start_time = time.time()
+        self.prep_start_time = 0
+        self.scraping_start_time = 0
+        self.scraped_count = 0
+
     def start_requests(self):
         # JavaScript döngüsü: Butona basar ve DOM'un güncellenmesini bekler
+        self.prep_start_time = time.time()
+        self.logger.info("--- EnsonHaberGundem SPIDER BAŞLADI ---")
+        
         load_more_script = """
         (async () => {
             const limit = 10; // Test için 10, sonra 30 yapabilirsin
@@ -28,7 +39,7 @@ class HaberlerSpider(scrapy.Spider):
         """
 
         yield scrapy.Request(
-            url="https://www.ensonhaber.com/magazin",
+            url="https://www.ensonhaber.com/gundem",
             meta={
                 "playwright": True,
                 "playwright_page_methods": [
@@ -43,28 +54,34 @@ class HaberlerSpider(scrapy.Spider):
 
         
     def parse(self, response):
-        if not hasattr(response, 'css'):
-            return
+        self.scraping_start_time = time.time()
+        prep_duration = self.scraping_start_time - self.prep_start_time
 
-        links = response.css('a[href*="/magazin/"]::attr(href)').getall()
+        self.logger.info(f"haber linkileri için çekme işlemi başladı")
         
+        links = response.css('a[href*="/gundem/"]::attr(href)').getall()
         unique_links = set()
+        
+        self.logger.info(f"JavaScript ile hazırlık süresi: {prep_duration:.2f} saniye")
+        
+        
         for link in links:
             full_url = response.urljoin(link)
             # Kategori sayfasının kendisini ve hatalı yapıları filtrele
-            if "/magazin/" in full_url and not full_url.endswith("/magazin"):
+            if "/gundem/" in full_url and not full_url.endswith("/gundem"):
                 # Sosyal medya paylaşım linklerini veya reklamları elemek için kısa kontrol
                 if not any(x in full_url for x in ['facebook.com', 'twitter.com', 'whatsapp:']):
                     unique_links.add(full_url)
 
-        self.logger.info(f"--- FİLTRE SONRASI BULUNAN TOPLAM HABER: {len(unique_links)} ---")
+        self.logger.info(f"Toplam {len(unique_links)} adet benzersiz haber linki radara takıldı!")
 
         for link in unique_links:
             yield scrapy.Request(link, callback=self.parse_items, meta={"playwright": False})
+            
     
     def parse_items(self, response):
         
-        
+        self.scraped_count += 1
         ensonhaberbotitem = EnsonhaberBotItem()
         
         
@@ -76,6 +93,8 @@ class HaberlerSpider(scrapy.Spider):
         
         # ana başlığı çekme
         ensonhaberbotitem['name'] = response.css('div.news-header h1::text').get()
+        
+        self.logger.info(f"[{self.scraped_count}] İşleniyor: {ensonhaberbotitem['name'][:50]}...")
         
         # alt başlıgı çekme
         ensonhaberbotitem['subheading'] = response.css('div.news-header h2::text').get()
@@ -106,3 +125,10 @@ class HaberlerSpider(scrapy.Spider):
         
         yield ensonhaberbotitem
         
+        
+    def closed(self, reason):
+        total_duration = time.time() - self.start_time
+        self.logger.info("--- SPIDER KAPATILDI ---")
+        self.logger.info(f"Toplam İşlem Süresi: {total_duration:.2f} saniye.")
+        self.logger.info(f"Toplam Çekilen Haber: {self.scraped_count}")
+        self.logger.info(f"Ortalama Haber Başına Hız: {total_duration/max(1, self.scraped_count):.2f} saniye.")
