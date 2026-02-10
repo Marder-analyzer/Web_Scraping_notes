@@ -7,6 +7,10 @@ from scrapy import signals
 
 # useful for handling different item types with a single interface
 from itemadapter import ItemAdapter
+import random
+from scrapy.downloadermiddlewares.retry import RetryMiddleware
+from scrapy.utils.response import response_status_message
+import logging
 
 
 class EnsonhaberBotSpiderMiddleware:
@@ -53,6 +57,23 @@ class EnsonhaberBotSpiderMiddleware:
         spider.logger.info("Spider opened: %s" % spider.name)
 
 
+class CustomUserAgentMiddleware:
+    def __init__(self):
+        self.user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1"
+        ]
+
+    def process_request(self, request, spider):
+        # Rastgele bir User-Agent seç ve isteğin başlığına ekle
+        agent = random.choice(self.user_agents)
+        request.headers['User-Agent'] = agent
+        
+
+
 class EnsonhaberBotDownloaderMiddleware:
     # Not all methods need to be defined. If a method is not defined,
     # scrapy acts as if the downloader middleware does not modify the
@@ -78,23 +99,16 @@ class EnsonhaberBotDownloaderMiddleware:
         return None
 
     def process_response(self, request, response, spider):
-        # Called with the response returned from the downloader.
-
-        # Must either;
-        # - return a Response object
-        # - return a Request object
-        # - or raise IgnoreRequest
+        if response.status == 403:
+            spider.logger.error(f"403 FORBIDDEN: Erişim engellendi! Proxy gerekebilir. URL: {request.url}")
+        elif response.status >= 500:
+            spider.logger.warning(f"SERVER ERROR {response.status}: Sunucu tarafında hata var. URL: {request.url}")
         return response
 
     def process_exception(self, request, exception, spider):
-        # Called when a download handler or a process_request()
-        # (from other downloader middleware) raises an exception.
-
-        # Must either:
-        # - return None: continue processing this exception
-        # - return a Response object: stops process_exception() chain
-        # - return a Request object: stops process_exception() chain
-        pass
+        # Bağlantı zaman aşımı veya DNS hataları için
+        spider.logger.error(f"Bağlantı Hatası: {str(exception)} | URL: {request.url}")
+        return None
 
     def spider_opened(self, spider):
         spider.logger.info("Spider opened: %s" % spider.name)
