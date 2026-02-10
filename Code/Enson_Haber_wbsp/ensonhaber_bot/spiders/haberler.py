@@ -39,7 +39,7 @@ class HaberlerSpider(scrapy.Spider):
         """
 
         yield scrapy.Request(
-            url="https://www.ensonhaber.com/gundem",
+            url="https://www.ensonhaber.com/teknoloji",
             meta={
                 "playwright": True,
                 "playwright_page_methods": [
@@ -59,7 +59,7 @@ class HaberlerSpider(scrapy.Spider):
 
         self.logger.info(f"haber linkileri için çekme işlemi başladı")
         
-        links = response.css('a[href*="/gundem/"]::attr(href)').getall()
+        links = response.css('a[href*="/teknoloji/"]::attr(href)').getall()
         unique_links = set()
         
         self.logger.info(f"JavaScript ile hazırlık süresi: {prep_duration:.2f} saniye")
@@ -68,7 +68,7 @@ class HaberlerSpider(scrapy.Spider):
         for link in links:
             full_url = response.urljoin(link)
             # Kategori sayfasının kendisini ve hatalı yapıları filtrele
-            if "/gundem/" in full_url and not full_url.endswith("/gundem"):
+            if "/teknoloji/" in full_url and not full_url.endswith("/teknoloji"):
                 # Sosyal medya paylaşım linklerini veya reklamları elemek için kısa kontrol
                 if not any(x in full_url for x in ['facebook.com', 'twitter.com', 'whatsapp:']):
                     unique_links.add(full_url)

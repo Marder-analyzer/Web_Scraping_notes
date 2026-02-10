@@ -69,8 +69,7 @@ class CustomUserAgentMiddleware:
 
     def process_request(self, request, spider):
         # Rastgele bir User-Agent seç ve isteğin başlığına ekle
-        agent = random.choice(self.user_agents)
-        request.headers['User-Agent'] = agent
+        request.headers['User-Agent'] = random.choice(self.user_agents)
         
 
 
