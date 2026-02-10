@@ -7,36 +7,60 @@ class HaberlerSpider(scrapy.Spider):
     allowed_domains = ["ensonhaber.com"]
 
     def start_requests(self):
+        # JavaScript döngüsü: Butona basar ve DOM'un güncellenmesini bekler
+        load_more_script = """
+        (async () => {
+            const limit = 10; // Test için 10, sonra 30 yapabilirsin
+            for (let i = 0; i < limit; i++) {
+                window.scrollTo(0, document.body.scrollHeight);
+                await new Promise(r => setTimeout(r, 2000));
+                
+                const btn = document.querySelector('.btn-read-more') || document.querySelector('#loadMoreBtn');
+                if (btn && btn.offsetParent !== null) {
+                    btn.click();
+                    await new Promise(r => setTimeout(r, 3000));
+                } else {
+                    break;
+                }
+            }
+            return true;
+        })()
+        """
+
         yield scrapy.Request(
             url="https://www.ensonhaber.com/magazin",
             meta={
                 "playwright": True,
                 "playwright_page_methods": [
-                    # 1. Sayfanın altına kaydır (Butonun yüklenmesi için)
-                    PageMethod("evaluate", "window.scrollTo(0, document.body.scrollHeight)"),
-                    # 2. 'Daha Fazla Yükle' butonuna tıkla hatalı bura bakılacak
-                    PageMethod("click", "#loadMoreBtn"),
-                    # 3. Yeni haberlerin HTML'e eklenmesi için bekle (2 saniye)
-                    PageMethod("wait_for_timeout", 2000),
+                    PageMethod("evaluate", load_more_script),
+                    PageMethod("wait_for_timeout", 3000),
                 ],
             },
             callback=self.parse,
+            dont_filter=True 
         )
         
+
+        
     def parse(self, response):
-        
-        # sayfadaki tüm haberlein ufak kısımlarından içeriğine girecek linklerin hepsini alma gezme
-        
-        container = response.css('div.container')
-        haber_linkleri = container.css('div.row div.news-card a::attr(href)').getall()
+        if not hasattr(response, 'css'):
+            return
 
-        # bu linklerin hepsini döngüde parse_items fonksiyonuna sokuyoruz
+        links = response.css('a[href*="/magazin/"]::attr(href)').getall()
         
-        for link in haber_linkleri:
+        unique_links = set()
+        for link in links:
+            full_url = response.urljoin(link)
+            # Kategori sayfasının kendisini ve hatalı yapıları filtrele
+            if "/magazin/" in full_url and not full_url.endswith("/magazin"):
+                # Sosyal medya paylaşım linklerini veya reklamları elemek için kısa kontrol
+                if not any(x in full_url for x in ['facebook.com', 'twitter.com', 'whatsapp:']):
+                    unique_links.add(full_url)
 
-            # tam url alma
-            tam_link = response.urljoin(link)
-            yield scrapy.Request(tam_link, callback=self.parse_items)
+        self.logger.info(f"--- FİLTRE SONRASI BULUNAN TOPLAM HABER: {len(unique_links)} ---")
+
+        for link in unique_links:
+            yield scrapy.Request(link, callback=self.parse_items, meta={"playwright": False})
     
     def parse_items(self, response):
         
@@ -72,7 +96,7 @@ class HaberlerSpider(scrapy.Spider):
         ensonhaberbotitem['sub_img_url'] = [sub.strip() for sub in response.css('div.news-body div.content p img::attr(src)').getall()]
        
         # metinleri çekelim
-        ensonhaberbotitem['news_text'] = [p.xpath('string(.)').get().strip() for p in response.css('div[property="articleBody"] p.text')s]
+        ensonhaberbotitem['news_text'] = [p.xpath('string(.)').get().strip() for p in response.css('div[property="articleBody"] p.text')]
         
         # haberin çektiğimiz verinin linkini alalım her biri için
         ensonhaberbotitem['product_url'] = response.url
