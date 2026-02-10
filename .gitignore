@@ -30,7 +30,7 @@
 /Code/Hurriyet_Haber_wbsp/haber/scrapy.cfg
 
 # --- Datalar ---
-
+/Code/Hurriyet_Haber_wbsp/data
 # --- __ ---
 /Code/Hurriyet_Haber_wbsp/haber/haber/__pycache__
 /Code/Hurriyet_Haber_wbsp/haber/haber/__init__.py
@@ -50,7 +50,7 @@
 # --- Codlar ---
 /Code/Enson_Haber_wbsp/ensonhaber_bot/settings.py
 # --- Datalar ---
-
+/Code/Enson_Haber_wbsp/data
 
 # --- __ ---
 /Code/Enson_Haber_wbsp/ensonhaber_bot/spiders/__init__.py
