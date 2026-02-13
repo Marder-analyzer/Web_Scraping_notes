@@ -57,3 +57,23 @@
 /Code/Enson_Haber_wbsp/ensonhaber_bot/spiders/__pycache__
 /Code/Enson_Haber_wbsp/ensonhaber_bot/__init__.py
 /Code/Enson_Haber_wbsp/ensonhaber_bot/__pycache__
+
+
+# --------------------- Trendyol Bot ---------------------
+
+# --- First Dosya ---
+
+# --- Textler/Documantasyonlar ---
+
+# --- Keyler ---
+
+# --- Codlar ---
+/Code/trendyol_bot/trendyol_bot/settings.py
+# --- Datalar ---
+/Code/trendyol_bot/data
+
+# --- __ ---
+/Code/trendyol_bot/trendyol_bot/spiders/__init__.py
+/Code/trendyol_bot/trendyol_bot/spiders/__pycache__
+/Code/trendyol_bot/trendyol_bot/__init__.py
+/Code/trendyol_bot/trendyol_bot/__pycache__
