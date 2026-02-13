@@ -7,6 +7,12 @@ class TrendyolSpider(scrapy.Spider):
     allowed_domains = ["trendyol.com"]
     start_urls = ["https://trendyol.com"]
 
+    def __init__(self, name = None, **kwargs):
+        super(TrendyolSpider,self).__init__(name, **kwargs)
+        # çekilen link sayısını ve süreyi takip etmek için değişkenler
+        self.start_time = time.time()
+        self.scraped_count = 0
+    
     #categorileri ayarlama birden fazla çekicez her biri için
     categories = [
         "elbise-x-c56"
@@ -39,6 +45,7 @@ class TrendyolSpider(scrapy.Spider):
     
     #linkleri çekmek için ilk ayarlamaları yapacağız. JavaScript ile çalışan bir site olduğu için Playwright kullanarak sayfanın tam olarak yüklenmesini sağlayacağız.
     def start_requests(self):
+        self.logger.info("--- Trendyol SPIDER BAŞLADI ---")
         # her kategori için ayrı ayrı istek atacağız
         for category in self.categories:
             url = f"https://www.trendyol.com/{category}"
@@ -64,7 +71,22 @@ class TrendyolSpider(scrapy.Spider):
 
     # bütün linkleri çekme işlemi ve dağıtma işlemini yaptığımız yer.
     def parse(self, response):
+        self.logger.info(f"Kategori sayfasında Link çekme işlemi başladı: {response.url}")
+        # Burada 'product-card' linklerini toplayacağız
+        # Yani her ürünün detay sayfasına giden linkler
+        links = response.css("a.product-card::attr(href)").getall()
         
+        self.logger.info(f"Kategori sayfasında {len(links)} adet link bulundu.")
+        
+        for link in links:
+            full_url = response.urljoin(link)
+            # Her bir ürün linkine gidiyoruz
+            yield scrapy.Request(
+                url=full_url,
+                callback=self.parse_items,
+                meta={"playwright": False} # Detay sayfasına giderken tarayıcı gereksiz işlem yükü
+            
+            
     # linke gittiğimizde ürünlerin verilerini çektiğimiz yer
     def parse_items(self, response):
     
