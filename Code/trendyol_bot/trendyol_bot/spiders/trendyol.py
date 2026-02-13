@@ -39,13 +39,26 @@ class TrendyolSpider(scrapy.Spider):
     
     #linkleri çekmek için ilk ayarlamaları yapacağız. JavaScript ile çalışan bir site olduğu için Playwright kullanarak sayfanın tam olarak yüklenmesini sağlayacağız.
     def start_requests(self):
-        # async ile sürekli işlem yapıalcak
-        
-        # while veya for dongüsü yapabiliriz
-        
-        # scrol en aşağıya değil biraz üstüne kadar yapacağız en altta yazılar var ve oraya kadar scroll yaparsak o yazılar gelmez. O yüzden biraz üstüne kadar scroll yapacağız.
-        
-        #buton olmadı için scrolla yüklendiği için break yapsısı kurulmalı
+        # her kategori için ayrı ayrı istek atacağız
+        for category in self.categories:
+            url = f"https://www.trendyol.com/{category}"
+            yield scrapy.Request(
+                url=url,
+                meta={
+                    "playwright": True,
+                    "playwright_include_page": True,
+                    "playwright_page_methods": [
+                        # 1. Sayfa yüklendiğinde çerezleri reddet/kabul et bence gerekli
+                        PageMethod("click", "button#onetrust-accept-btn-handler", timeout=5000),
+                        # 2. Akıllı scroll scriptini çalıştır (limit = load_more_script içinde belirlendi)
+                        PageMethod("evaluate", self.load_more_script),
+                        # 3. bekleme süresi önemli en altta gittiğinde yıkalıyamassa sonsuz döngüye girer veride gelmez
+                        PageMethod("wait_for_timeout", 2000),
+                    ],
+                },
+                callback=self.parse,
+                dont_filter=True 
+            )
         
         
 
