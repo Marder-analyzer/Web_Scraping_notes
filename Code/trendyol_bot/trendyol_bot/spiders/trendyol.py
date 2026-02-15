@@ -2,6 +2,10 @@ import scrapy
 from scrapy_playwright.page import PageMethod
 import time
 
+
+
+
+
 class TrendyolSpider(scrapy.Spider):
     name = "trendyol"
     allowed_domains = ["trendyol.com"]
@@ -99,6 +103,19 @@ class TrendyolSpider(scrapy.Spider):
         #veri tabanına kayıt ederken burası ekstradan alt katagörü olayı bakılacak 
         category = response.css("div.product-detail-breadcrumbsa div.breadcrumb-wrapper ul.breadcrumb-list li.product-detail-breadcrumbs-item a::text").getall()
         category = " > ".join([c.strip() for c in category if c.strip()])
+        
+    # 2
+    
+    # 3
+    
+    # 4
+    
+    # 5
+    
+    # 6
+    
+    # 7
+    
     
     
     def handle_error(self, failure):

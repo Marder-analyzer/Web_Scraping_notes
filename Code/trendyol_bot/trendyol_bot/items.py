@@ -7,6 +7,12 @@ import scrapy
 
 
 class TrendyolBotItem(scrapy.Item):
-    # define the fields for your item here like:
-    # name = scrapy.Field()
-    pass
+    url = scrapy.Field(output_processor=TakeFirst())
+    category = scrapy.Field()
+    title = scrapy.Field(output_processor=TakeFirst())   
+    evolation = scrapy.Field(output_processor=TakeFirst())
+    price = scrapy.Field(output_processor=TakeFirst())
+    images = scrapy.Field()
+    explanation = scrapy.Field(output_processor=TakeFirst())
+    
+    
