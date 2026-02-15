@@ -12,6 +12,7 @@ class TrendyolSpider(scrapy.Spider):
         # çekilen link sayısını ve süreyi takip etmek için değişkenler
         self.start_time = time.time()
         self.scraped_count = 0
+        self.logger.info(f"Trendyol Spider başlatıldı. Başlangıç zamanı: {time.ctime(self.start_time)}")
     
     #categorileri ayarlama birden fazla çekicez her biri için
     categories = [
@@ -45,10 +46,11 @@ class TrendyolSpider(scrapy.Spider):
     
     #linkleri çekmek için ilk ayarlamaları yapacağız. JavaScript ile çalışan bir site olduğu için Playwright kullanarak sayfanın tam olarak yüklenmesini sağlayacağız.
     def start_requests(self):
-        self.logger.info("--- Trendyol SPIDER BAŞLADI ---")
+        self.logger.info(f"Toplam {len(self.categories)} kategori için işlem başlatılıyor.")
         # her kategori için ayrı ayrı istek atacağız
         for category in self.categories:
             url = f"https://www.trendyol.com/{category}"
+            self.logger.debug(f"URL istek gönderildi: {url}")
             yield scrapy.Request(
                 url=url,
                 meta={
@@ -64,19 +66,22 @@ class TrendyolSpider(scrapy.Spider):
                     ],
                 },
                 callback=self.parse,
-                dont_filter=True 
+                dont_filter=True,
+                errback=self.handle_error
             )
         
         
 
     # bütün linkleri çekme işlemi ve dağıtma işlemini yaptığımız yer.
     def parse(self, response):
-        self.logger.info(f"Kategori sayfasında Link çekme işlemi başladı: {response.url}")
+        self.logger.info(f"Kategori sayfası yüklendi ve Link çekme işlemi başladı: {response.url}")
         # Burada 'product-card' linklerini toplayacağız
         # Yani her ürünün detay sayfasına giden linkler
         links = response.css("a.product-card::attr(href)").getall()
+        if not links:
+            self.logger.warning(f"Dikkat: {response.url} sayfasında hiç ürün linki bulunamadı!")
         
-        self.logger.info(f"Kategori sayfasında {len(links)} adet link bulundu.")
+        self.logger.info(f"Kategori sayfasında {len(links)} adet link bulundu ve işlenmeye başladı.")
         
         for link in links:
             full_url = response.urljoin(link)
@@ -89,6 +94,17 @@ class TrendyolSpider(scrapy.Spider):
             
     # linke gittiğimizde ürünlerin verilerini çektiğimiz yer
     def parse_items(self, response):
+    
+    # 1. kategori çekme
+        #veri tabanına kayıt ederken burası ekstradan alt katagörü olayı bakılacak 
+        category = response.css("div.product-detail-breadcrumbsa div.breadcrumb-wrapper ul.breadcrumb-list li.product-detail-breadcrumbs-item a::text").getall()
+        category = " > ".join([c.strip() for c in category if c.strip()])
+    
+    
+    def handle_error(self, failure):
+        # CRITICAL: Sistem engellendi mi veya internet mi koptu?
+        # Captcha veya 403 Forbidden durumları burada yakalanır.
+        self.logger.critical(f"KRİTİK HATA: İstek başarısız oldu! Detay: {repr(failure)}")
     
     # spiderin kapanışında toplam çekilen link sayısını ve süreyi loglamak için kullanacağız.  
     def closed(self, reason):
