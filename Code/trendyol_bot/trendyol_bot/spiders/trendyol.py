@@ -16,7 +16,7 @@ class TrendyolSpider(scrapy.Spider):
         "category": "ul.breadcrumb-list li.product-detail-breadcrumbs-item a::text",
         
         "title": [
-            "h1.product-title",           # Tüm h1'i al
+            "h1.product-title",  
             "h1[data-testid='product-title']",
             "h1.pr-new-br span.prdct-desc-cntnr-name::text",
             "h1::text"
@@ -191,6 +191,7 @@ class TrendyolSpider(scrapy.Spider):
     # en büyük değişiklik burada yapıldı
     # JSON-LD verisi varsa buradan çekmeye çalışırız. Bu genellikle daha temiz ve düzenli veri sağlar.
     def _load_from_json(self, loader, data):
+        
         # title
         if data.get("name"):
             loader.add_value("title", data.get("name"))
@@ -222,24 +223,18 @@ class TrendyolSpider(scrapy.Spider):
         agg_rating = data.get("aggregateRating", {})
         if isinstance(agg_rating, dict) and agg_rating.get("ratingValue"):
             loader.add_value("evaluation", str(agg_rating.get("ratingValue")))
-        else:
-            loader.add_value("evaluation", "-1")
             
         # evaluation_len
         if isinstance(agg_rating, dict) and agg_rating.get("ratingCount"):
             loader.add_value("evaluation_len", str(agg_rating.get("ratingCount")))
-        else:
-            loader.add_value("evaluation_len", "-1")
-            
-        
-            
+                    
     # JSON-LD verisi yoksa veya eksikse, HTML üzerinden çekmeye çalışırız. Bu genellikle daha karmaşık ve düzensiz olabilir, bu yüzden öncelikli olarak JSON-LD'yi tercih ederiz.
     def _load_from_html(self, loader, response):
         self.logger.warning(f"JSON-LD eksik, CSS Fallback devrede: {loader.context['response'].url}")
         
         # title ---
-        # TITLE - Özel işlem (içinde <strong>, <br> olabilir)
         title_selectors = self.SELECTORS.get("title")
+        title_found = False
         if isinstance(title_selectors, list):
             for selector in title_selectors:
                 # XPath ile tüm text node'ları al
@@ -257,9 +252,14 @@ class TrendyolSpider(scrapy.Spider):
                         loader.add_value("title", full_title)
                         self.logger.info(f"Title bulundu: {selector} -> {full_title[:50]}...")
                         break
+                    
+        if not title_found:
+            loader.add_value("title", "-1")
+            self.logger.warning("Title bulunamadı, varsayılan -1 atandı.")              
         
-         # PRICE
+        # PRICE
         price_selectors = self.SELECTORS.get("price")
+        price_found = False
         if isinstance(price_selectors, list):
             for selector in price_selectors:
                 price_values = response.css(selector).getall()
@@ -276,8 +276,10 @@ class TrendyolSpider(scrapy.Spider):
             loader.add_value("price", "-1")
             self.logger.warning(f"Fiyat bulunamadı, varsayılan -1 atandı: {response.url}")
         
+        
         # EVALUATION
         eval_selectors = self.SELECTORS.get("evaluation")
+        eval_found = False
         if isinstance(eval_selectors, list):
             
             for selector in eval_selectors:
@@ -300,8 +302,10 @@ class TrendyolSpider(scrapy.Spider):
             loader.add_value("evaluation", "-1")
             self.logger.info("Evaluation bulunamadı, varsayılan olarak -1 atandı.")
             
+        
         # EVALUATION_LEN
         eval_len_selectors = self.SELECTORS.get("evaluation_len")
+        eval_len_found = False
         if isinstance(eval_len_selectors, list):
             for selector in eval_len_selectors:
                 eval_len_values = response.css(selector).getall()
@@ -319,6 +323,8 @@ class TrendyolSpider(scrapy.Spider):
             loader.add_value("evaluation_len", "-1")
             self.logger.info("Evaluation len bulunamadı, varsayılan -1 atandı.")
         
+        
+        # --- IMAGES ---
         images_selectors = self.SELECTORS.get("images")
         images_found = False
 
@@ -340,14 +346,30 @@ class TrendyolSpider(scrapy.Spider):
             if loader.get_output_value("images"):
                 images_found = True
 
-        # --- KRİTİK NOKTA: Hiç görsel bulunamazsa boş string ata ---
+        # ---Hiç görsel bulunamazsa -1 ata ---
         if not images_found:
-            loader.add_value("images", "")
+            loader.add_value("images", "-1")
             self.logger.warning(f"Görsel hiçbir selector ile bulunamadı: {response.url}")
+            
+        # --- EXPLANATION ---
+        explanation_selectors = self.SELECTORS.get("explanation")
+        explanation_found = False
         
-        
-        
-        
+        if isinstance(explanation_selectors, list):
+            for selector in explanation_selectors:
+                expl_values = response.css(selector).getall()
+                if expl_values:
+                    clean_expl = ' '.join([text.strip() for text in expl_values if text.strip()])
+                    if clean_expl:
+                        loader.add_value("explanation", clean_expl)
+                        self.logger.info(f"Explanation bulundu: {selector}")
+                        explanation_found = True
+                        break
+
+        if not explanation_found:
+            loader.add_value("explanation", "-1")
+            self.logger.info("Explanation bulunamadı veya boş geldi, -1 atandı.")
+         
     def handle_error(self, failure):
         """Hata yakalama ve loglama"""
         self.logger.error(f"Istek basarisiz oldu! URL: {failure.request.url}")
