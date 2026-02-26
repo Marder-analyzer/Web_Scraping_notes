@@ -5,11 +5,16 @@
 
 import scrapy
 from itemloaders.processors import TakeFirst, Join, MapCompose
+import re
+import emoji
 
 def clean_text(value):
     """Gelen metinlerin başındaki ve sonundaki gereksiz boşlukları siler"""
     if value:
-        return str(value).strip()
+        text_without_emojis = emoji.replace_emoji(str(value), replace='')
+        clean_val = re.sub(r'\s+', ' ', text_without_emojis)
+        
+        return clean_val.strip()
     return value
 
 

@@ -18,22 +18,19 @@ class TrendyolBotPipeline:
             
         price_str = str(price_raw).strip()
         
-        if price_str and price_str != '-1':
+        if price_str in ['-1', '', 'Yok', 'None']:
+            item['price'] = -1
+        else:
             try:
-                # 'TL', 'tl' gibi yazıları ve boşlukları sil
                 clean_price = price_str.upper().replace('TL', '').strip()
-                
-                # Eğer virgül varsa (Örn: 1.250,99), Türk formatıdır, noktayı sil virgülü nokta yap.
                 if ',' in clean_price:
                     clean_price = clean_price.replace('.', '').replace(',', '.')
-                # Eğer virgül yoksa (Örn: 619.99), zaten standart JSON formatıdır
-                
                 item['price'] = float(clean_price)
+                
             except Exception as e:
                 spider.logger.error(f"Fiyat donusturulemedi: {price_str} Hata: {e}")
-                item['price'] = -1.0
-        else:
-            item['price'] = -1.0
+                item['price'] = price_str
+
             
             
         # 2. DEĞERLENDİRME PUANI (EVALUATION) TEMİZLİĞİ
@@ -45,9 +42,11 @@ class TrendyolBotPipeline:
             
         eval_str = str(eval_raw).strip()
         
-        if eval_str != '-1':
+        if eval_str in ['-1', '', 'Yok', 'None', '0.0', '0']:
+            item['evaluation'] = -1
+        else:
             try:
-                item['evaluation'] = float(eval_str.replace(',', '.'))
+                item['evaluation'] = round(float(eval_str.replace(',', '.')), 1)
             except Exception as e:
                 spider.logger.warning(f"Evaluation donusturulemedi, eski hali birakildi: {eval_str}")
                 item['evaluation'] = eval_str
@@ -62,15 +61,17 @@ class TrendyolBotPipeline:
             
         eval_len_str = str(eval_len_raw).strip()
         
-        if eval_len_str != '-1':
+        if eval_len_str in ['-1', '', 'Yok', 'None', '0']:
+            item['evaluation_len'] = -1
+        else:
             try:
                 clean_len_str = eval_len_str.replace('.', '')
                 numbers = re.findall(r'\d+', clean_len_str)
                 if numbers:
                     item['evaluation_len'] = int(numbers[0])
                 else:
-                    # İçinde hiç rakam bulamazsa (Örn: "Yorum Yok") olduğu gibi bırak
-                    item['evaluation_len'] = eval_len_str
+                    item['evaluation_len'] = -1
+                    
             except Exception as e:
                 spider.logger.warning(f"Evaluation Len donusturulemedi, eski hali birakildi: {eval_len_str}")
                 item['evaluation_len'] = eval_len_str

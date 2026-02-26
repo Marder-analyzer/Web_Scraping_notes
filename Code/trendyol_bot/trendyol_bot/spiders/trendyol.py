@@ -33,10 +33,16 @@ class TrendyolSpider(scrapy.Spider):
         ],
         
         "price": [
+            "div.prc-box-dsc::text",
+            "div.prc-dsc::text",
+            "span.prc-slg::text",
+            "div.product-price-container span.discounted::text",
+            "div.campaign-price-content span::text",
             "div.campaign-price-content p.old-price::text",
             "div.price-wrapper div.price-container span.discounted::text",
             "div.price-wrapper div.ty-plus-price-original-price::text",
-            "div.price-wrapper span.discounted::text"
+            "div.price-wrapper span.discounted::text",
+            "div.price-wrapper div.price-view span.original::text",
         ],
         
         "images": "img[data-testid='image']::attr(src)",
@@ -303,7 +309,7 @@ class TrendyolSpider(scrapy.Spider):
                 loader.add_value("evaluation", rating_match.group(1))
                 self.logger.info(f"Regex ile Puan bulundu: {rating_match.group(1)}")
             else:
-                loader.add_value("evaluation", "Yok")
+                loader.add_value("evaluation", "-1")
                 
         # --- DEĞERLENDİRME SAYISI (EVALUATION_LEN) - REGEX ---
         if not loader.get_output_value("evaluation_len"):
@@ -315,7 +321,7 @@ class TrendyolSpider(scrapy.Spider):
                 loader.add_value("evaluation_len", count_match.group(1))
                 self.logger.info(f"Regex ile Değerlendirme Sayısı bulundu: {count_match.group(1)}")
             else:
-                loader.add_value("evaluation_len", "0")
+                loader.add_value("evaluation_len", "-1")
         
         # --- IMAGES ---
         images_selectors = self.SELECTORS.get("images")
