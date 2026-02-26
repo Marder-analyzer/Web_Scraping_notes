@@ -4,7 +4,7 @@ from scrapy.loader import ItemLoader
 import time
 from ..items import TrendyolBotItem
 import json
-
+import re
 class TrendyolSpider(scrapy.Spider):
     name = "trendyol"
     allowed_domains = ["trendyol.com"]
@@ -22,13 +22,21 @@ class TrendyolSpider(scrapy.Spider):
             "h1::text"
         ],
         
-        "evaluation": "div.product-details-other-details div.reviews-summary-rating-detail span.reviews-summary-average-rating::text",
+        "evaluation": [
+            "div.envoy div.product-details-other-details div.reviews-summary-rating-detail span.reviews-summary-average-rating::text",
+            "div.product-details-other-details div.variant-pdp span.reviews-summary-average-rating::text",
+        ],
         
-        "evaluation_len": "div.product-details-other-details a.reviews-summary-reviews-detail span.b::text",
+        "evaluation_len": [
+            "div.product-details-other-details a.reviews-summary-reviews-detail span.b::text",
+            "div.product-details-other-details div.variant-pdp a.reviews-summary-reviews-detail span.b::text",
+        ],
         
         "price": [
             "div.campaign-price-content p.old-price::text",
             "div.price-wrapper div.price-container span.discounted::text",
+            "div.price-wrapper div.ty-plus-price-original-price::text",
+            "div.price-wrapper span.discounted::text"
         ],
         
         "images": "img[data-testid='image']::attr(src)",
@@ -100,7 +108,7 @@ class TrendyolSpider(scrapy.Spider):
             
             # 2. BİR SONRAKİ SAYFAYA GEÇİŞ YAP (Akıllı Sayfalama)
             next_page = current_page + 1
-            MAX_SAYFA_LIMITI = 3 # 200 sayfa = 4800 ürün
+            MAX_SAYFA_LIMITI = 2 # 200 sayfa = 4800 ürün
             
             if next_page <= MAX_SAYFA_LIMITI:
                 next_url = f"https://www.trendyol.com/{category_name}?pi={next_page}"
@@ -287,51 +295,27 @@ class TrendyolSpider(scrapy.Spider):
         
         
         # EVALUATION
-        eval_selectors = self.SELECTORS.get("evaluation")
-        eval_found = False
-        if isinstance(eval_selectors, list):
+        if not loader.get_output_value("evaluation"):
+            rating_match = re.search(r'"averageRating"\s*:\s*([\d.]+)', response.text) or \
+                           re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', response.text)
             
-            for selector in eval_selectors:
-                if '::text' not in selector:
-                    eval_values = response.css(selector + ' ::text').getall()    
-                else:
-                    eval_values = response.css(selector).getall()
-                    
-                if eval_values:
-                    loader.add_value("evaluation", eval_values)
-                    self.logger.info(f"Evaluation bulundu: {selector}")
-                    break
-        else:
-            loader.add_css("evaluation", eval_selectors)
-            if loader.get_output_value("evaluation"):
-                eval_found = True
-
-        # Eğer hiçbir selector veri bulamadıysa -1 bas ---
-        if not eval_found:
-            loader.add_value("evaluation", "-1")
-            self.logger.info("Evaluation bulunamadı, varsayılan olarak -1 atandı.")
-            
-        
-        # EVALUATION_LEN
-        eval_len_selectors = self.SELECTORS.get("evaluation_len")
-        eval_len_found = False
-        if isinstance(eval_len_selectors, list):
-            for selector in eval_len_selectors:
-                eval_len_values = response.css(selector).getall()
-                if eval_len_values:
-                    loader.add_value("evaluation_len", eval_len_values)
-                    self.logger.info(f"Evaluation len bulundu: {selector}")
-                    break
-        else:
-            # Tek bir selector varsa direkt ekle
-            loader.add_css("evaluation_len", eval_len_selectors)
-            if loader.get_output_value("evaluation_len"):
-                eval_len_found = True
+            if rating_match:
+                loader.add_value("evaluation", rating_match.group(1))
+                self.logger.info(f"Regex ile Puan bulundu: {rating_match.group(1)}")
+            else:
+                loader.add_value("evaluation", "Yok")
                 
-        if not eval_len_found:
-            loader.add_value("evaluation_len", "-1")
-            self.logger.info("Evaluation len bulunamadı, varsayılan -1 atandı.")
-        
+        # --- DEĞERLENDİRME SAYISI (EVALUATION_LEN) - REGEX ---
+        if not loader.get_output_value("evaluation_len"):
+            count_match = re.search(r'"totalRatingCount"\s*:\s*(\d+)', response.text) or \
+                          re.search(r'"ratingCount"\s*:\s*"?(\d+)"?', response.text) or \
+                          re.search(r'"reviewCount"\s*:\s*"?(\d+)"?', response.text)
+            
+            if count_match:
+                loader.add_value("evaluation_len", count_match.group(1))
+                self.logger.info(f"Regex ile Değerlendirme Sayısı bulundu: {count_match.group(1)}")
+            else:
+                loader.add_value("evaluation_len", "0")
         
         # --- IMAGES ---
         images_selectors = self.SELECTORS.get("images")
