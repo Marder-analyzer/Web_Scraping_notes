@@ -3,6 +3,9 @@
 # See documentation in:
 # https://docs.scrapy.org/en/latest/topics/items.html
 
+
+
+
 import scrapy
 from itemloaders.processors import TakeFirst, Join, MapCompose
 

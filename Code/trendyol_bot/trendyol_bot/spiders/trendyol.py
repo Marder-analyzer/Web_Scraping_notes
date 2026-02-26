@@ -9,6 +9,13 @@ class TrendyolSpider(scrapy.Spider):
     name = "trendyol"
     allowed_domains = ["trendyol.com"]
     start_urls = ["https://trendyol.com"]
+    
+    custom_settings = {
+        "PLAYWRIGHT_LAUNCH_OPTIONS": {
+            "headless": False,  # Tarayıcıyı ekranda açar
+            "timeout": 60000    # Kapanmaması için süreyi uzatırız
+        }
+    }
 
     # Selectorları merkezleştireceğiz
     
@@ -54,50 +61,25 @@ class TrendyolSpider(scrapy.Spider):
         #ve diğer kategoriler eklenebilir
     ]
     
-    #scroll işlemi için JavaScript kodu. Bu kod, sayfanın sonuna kadar kaydırır ve yeni ürünlerin yüklenmesini sağlar. Limit parametresi, kaç kez kaydırma yapılacağını belirler.
-    # trendyolun yapısı gereği bekleme ve scrol en alt değil belli px eksiği aşağıya kaydırıyoruz
-    
-    load_more_script = """
-    async (limit = 5) => {
-        let lastHeight = document.body.scrollHeight;
-        let count = 0;
         
-        while (count < limit) {
-            
-            window.scrollTo(0, document.body.scrollHeight - 1000);
-            await new Promise(r => setTimeout(r, 2000)); // Yüklenmesi için bekle
-            
-            let newHeight = document.body.scrollHeight;
-            
-            if (newHeight === lastHeight) break;
-            
-            lastHeight = newHeight;
-            count++;
-        }
-        return true;
-    }
-    """
-    
     #linkleri çekmek için ilk ayarlamaları yapacağız. JavaScript ile çalışan bir site olduğu için Playwright kullanarak sayfanın tam olarak yüklenmesini sağlayacağız.
     def start_requests(self):
         self.logger.info(f"Toplam {len(self.categories)} kategori için işlem başlatılıyor.")
-        # her kategori için ayrı ayrı istek atacağız
         for category in self.categories:
-            url = f"https://www.trendyol.com/{category}"
+            # pi=1 (1. sayfa) parametresi ile başlıyoruz
+            url = f"https://www.trendyol.com/{category}?pi=1"
             self.logger.debug(f"URL istek gönderildi: {url}")
             yield scrapy.Request(
                 url=url,
                 meta={
                     "playwright": True,
-                    "playwright_include_page": True,
+                    "playwright_include_page": False,
                     "playwright_page_methods": [
-                        # 1. Sayfa yüklendiğinde çerezleri reddet/kabul et bence gerekli
-                        PageMethod("click", "button#onetrust-accept-btn-handler", timeout=5000),
-                        # 2. Akıllı scroll scriptini çalıştır (limit = load_more_script içinde belirlendi)
-                        PageMethod("evaluate", self.load_more_script),
-                        # 3. bekleme süresi önemli en altta gittiğinde yıkalıyamassa sonsuz döngüye girer veride gelmez
-                        PageMethod("wait_for_timeout", 2000),
+                        # Sadece sayfanın tam yüklenmesini bekliyoruz
+                        PageMethod("wait_for_timeout", 3000),
                     ],
+                    "category_name": category, # Kategori adını diğer fonksiyona taşıyoruz
+                    "page_number": 1           # Sayfa numarasını takip ediyoruz
                 },
                 callback=self.parse,
                 dont_filter=True,
@@ -106,25 +88,49 @@ class TrendyolSpider(scrapy.Spider):
     
     # bütün linkleri çekme işlemi ve dağıtma işlemini yaptığımız yer.
     def parse(self, response):
-        self.logger.info(f"Kategori sayfası yüklendi ve Link çekme işlemi başladı: {response.url}")
-        # Burada 'product-card' linklerini toplayacağız
-        # Yani her ürünün detay sayfasına giden linkler
+        category_name = response.meta.get("category_name")
+        current_page = response.meta.get("page_number", 1)
+        
+        self.logger.info(f"Kategori sayfası yüklendi: {response.url}")
+        
+        # Ürün linklerini topla
         links = response.css("a.product-card::attr(href)").getall()
         
-        if not links:
-            self.logger.warning(f"Dikkat: {response.url} sayfasında hiç ürün linki bulunamadı!")
-        else:
-            self.logger.info(f"Kategori sayfasında {len(links)} adet link bulundu ve işlenmeye başladı.")
-        
-        for link in links:
-            full_url = response.urljoin(link)
-            # Her bir ürün linkine gidiyoruz
+        # Eğer sayfada ürün varsa:
+        if links:
+            self.logger.info(f"Sayfa {current_page}'de {len(links)} adet link bulundu ve işleniyor.")
+            
+            # 1. Bulunan ürünlerin detay sayfalarına git
+            for link in links:
+                full_url = response.urljoin(link)
+                yield scrapy.Request(
+                    url=full_url,
+                    callback=self.parse_items,
+                    # Detay sayfalarında playwright kullanmıyoruz
+                    errback=self.handle_error
+                )
+            
+            # 2. BİR SONRAKİ SAYFAYA GEÇİŞ YAP (Akıllı Sayfalama)
+            next_page = current_page + 1
+            next_url = f"https://www.trendyol.com/{category_name}?pi={next_page}"
+            
             yield scrapy.Request(
-                url=full_url,
-                callback=self.parse_items,
-                meta={"playwright": True}, # Detay sayfasına giderken tarayıcı gereksiz işlem yükü
+                url=next_url,
+                meta={
+                    "playwright": True,
+                    "playwright_include_page": True,
+                    "playwright_page_methods": [
+                        PageMethod("wait_for_timeout", 3000),
+                    ],
+                    "category_name": category_name,
+                    "page_number": next_page
+                },
+                callback=self.parse,
                 errback=self.handle_error
             )
+        # Eğer sayfada hiç ürün yoksa (Kategorinin sonuna geldiysek):
+        else:
+            self.logger.info(f"Sayfa {current_page} boş. {category_name} kategorisinin sonuna gelindi!")
             
     # linke gittiğimizde ürünlerin verilerini çektiğimiz yer
     # Urun verilerini cektigimiz ana fonksiyon
@@ -144,8 +150,9 @@ class TrendyolSpider(scrapy.Spider):
             # JSON-LD yoksa HTML'den cekmeye calis
             self.logger.warning(f"JSON-LD bulunamadi, HTML fallback kullaniliyor: {response.url}")
             self._load_categories(loader, response, None)
-            self._load_from_html(loader, response)
-
+            
+        self._load_from_html(loader, response)
+        
         self.scraped_count += 1
         yield loader.load_item()
 
@@ -166,7 +173,6 @@ class TrendyolSpider(scrapy.Spider):
 
     # category özgü yapıldı saçma çıktılar tekrar eden çıktıları burada hallettik
     def _load_categories(self, loader, response, json_data):
-        """Kategori hiyerarsisini ceker"""
         raw_categories = response.css(self.SELECTORS["category"]).getall()
         
         if not raw_categories and json_data and json_data.get("category"):
@@ -188,7 +194,6 @@ class TrendyolSpider(scrapy.Spider):
             if final_categories:
                 loader.add_value("category", " > ".join(final_categories))
 
-    # en büyük değişiklik burada yapıldı
     # JSON-LD verisi varsa buradan çekmeye çalışırız. Bu genellikle daha temiz ve düzenli veri sağlar.
     def _load_from_json(self, loader, data):
         
@@ -371,12 +376,10 @@ class TrendyolSpider(scrapy.Spider):
             self.logger.info("Explanation bulunamadı veya boş geldi, -1 atandı.")
          
     def handle_error(self, failure):
-        """Hata yakalama ve loglama"""
         self.logger.error(f"Istek basarisiz oldu! URL: {failure.request.url}")
         self.logger.error(f"Hata detayi: {repr(failure)}")
     
     def closed(self, reason):
-        """Spider kapanis raporu"""
         duration = time.time() - self.start_time
         self.logger.info("-" * 50)
         self.logger.info(f"FINAL RAPORU")
