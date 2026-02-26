@@ -24,4 +24,4 @@ class TrendyolBotItem(scrapy.Item):
         output_processor=Join("\n")            # Paragraflar arasına satır başı koyarak birleştirir
     )
     
-    
+    attributes = scrapy.Field()

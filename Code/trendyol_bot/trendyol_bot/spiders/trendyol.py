@@ -10,13 +10,6 @@ class TrendyolSpider(scrapy.Spider):
     allowed_domains = ["trendyol.com"]
     start_urls = ["https://trendyol.com"]
     
-    custom_settings = {
-        "PLAYWRIGHT_LAUNCH_OPTIONS": {
-            "headless": False,  # Tarayıcıyı ekranda açar
-            "timeout": 60000    # Kapanmaması için süreyi uzatırız
-        }
-    }
-
     # Selectorları merkezleştireceğiz
     
     SELECTORS = {
@@ -45,6 +38,7 @@ class TrendyolSpider(scrapy.Spider):
             "div.content-description-container *::text", # Ürün Açıklaması (Detaylı metin)
             "div.detail-desc-container *::text"          # Eski tip açıklama yapısı
         ]
+        
     }
 
 
@@ -72,12 +66,6 @@ class TrendyolSpider(scrapy.Spider):
             yield scrapy.Request(
                 url=url,
                 meta={
-                    "playwright": True,
-                    "playwright_include_page": False,
-                    "playwright_page_methods": [
-                        # Sadece sayfanın tam yüklenmesini bekliyoruz
-                        PageMethod("wait_for_timeout", 3000),
-                    ],
                     "category_name": category, # Kategori adını diğer fonksiyona taşıyoruz
                     "page_number": 1           # Sayfa numarasını takip ediyoruz
                 },
@@ -112,26 +100,26 @@ class TrendyolSpider(scrapy.Spider):
             
             # 2. BİR SONRAKİ SAYFAYA GEÇİŞ YAP (Akıllı Sayfalama)
             next_page = current_page + 1
-            next_url = f"https://www.trendyol.com/{category_name}?pi={next_page}"
+            MAX_SAYFA_LIMITI = 3 # 200 sayfa = 4800 ürün
             
-            yield scrapy.Request(
-                url=next_url,
-                meta={
-                    "playwright": True,
-                    "playwright_include_page": True,
-                    "playwright_page_methods": [
-                        PageMethod("wait_for_timeout", 3000),
-                    ],
-                    "category_name": category_name,
-                    "page_number": next_page
-                },
-                callback=self.parse,
-                errback=self.handle_error
-            )
+            if next_page <= MAX_SAYFA_LIMITI:
+                next_url = f"https://www.trendyol.com/{category_name}?pi={next_page}"
+                
+                yield scrapy.Request(
+                    url=next_url,
+                    meta={
+                        "category_name": category_name,
+                        "page_number": next_page
+                    },
+                    callback=self.parse,
+                    errback=self.handle_error
+                )
+            else:
+                self.logger.info(f"GÜVENLİK FRENİ: Maksimum sayfa limitine ({MAX_SAYFA_LIMITI}) ulaşıldı. Sonraki sayfaya geçiş durduruldu.")
+                
         # Eğer sayfada hiç ürün yoksa (Kategorinin sonuna geldiysek):
         else:
             self.logger.info(f"Sayfa {current_page} boş. {category_name} kategorisinin sonuna gelindi!")
-            
     # linke gittiğimizde ürünlerin verilerini çektiğimiz yer
     # Urun verilerini cektigimiz ana fonksiyon
     def parse_items(self, response):
@@ -232,6 +220,22 @@ class TrendyolSpider(scrapy.Spider):
         # evaluation_len
         if isinstance(agg_rating, dict) and agg_rating.get("ratingCount"):
             loader.add_value("evaluation_len", str(agg_rating.get("ratingCount")))
+            
+        # ATTRIBUTES
+        additional_properties = data.get("additionalProperty")
+        
+        if additional_properties and isinstance(additional_properties, list):
+            features_dict = {}
+            for prop in additional_properties:
+                # Her bir özelliğin "name" (anahtar) ve "value" (değer) kısımlarını alıyoruz
+                if isinstance(prop, dict) and prop.get("name") and prop.get("value"):
+                    key = str(prop.get("name")).strip()
+                    val = str(prop.get("value")).strip()
+                    features_dict[key] = val
+            
+            if features_dict:
+                loader.add_value("attributes", features_dict)
+                self.logger.info(f"JSON-LD'den özellikler bulundu: {len(features_dict)} adet")
                     
     # JSON-LD verisi yoksa veya eksikse, HTML üzerinden çekmeye çalışırız. Bu genellikle daha karmaşık ve düzensiz olabilir, bu yüzden öncelikli olarak JSON-LD'yi tercih ederiz.
     def _load_from_html(self, loader, response):
@@ -374,6 +378,30 @@ class TrendyolSpider(scrapy.Spider):
         if not explanation_found:
             loader.add_value("explanation", "-1")
             self.logger.info("Explanation bulunamadı veya boş geldi, -1 atandı.")
+            
+        # --- ATTRIBUTES (DİNAMİK ÜRÜN ÖZELLİKLERİ) ---
+        if not loader.get_output_value("attributes"):
+            features_dict = {}
+            
+            # DOM'daki her bir özellik satırını (attribute-item) buluyoruz
+            attribute_blocks = response.css("div.attributes div.attribute-item")
+            
+            # Her bir satırın içine girip name ve value değerlerini çekiyoruz
+            for block in attribute_blocks:
+                key = block.css("div.name::text").get()
+                val = block.css("div.value::text").get()
+                
+                # İkisi de boş değilse sözlüğümüze (dictionary) ekliyoruz
+                if key and val:
+                    features_dict[key.strip()] = val.strip()
+                    
+            # Sözlük dolduysa item'a ekle, boşsa -1 veya uyarı ata
+            if features_dict:
+                loader.add_value("attributes", features_dict)
+                self.logger.info(f"Dinamik özellikler bulundu: {len(features_dict)} adet")
+            else:
+                loader.add_value("attributes", {"Bilgi": "-1"})
+                self.logger.warning("Özellik tablosu bulunamadı veya boş.")
          
     def handle_error(self, failure):
         self.logger.error(f"Istek basarisiz oldu! URL: {failure.request.url}")
