@@ -13,27 +13,25 @@ class RandomUserAgentMiddleware:
     def __init__(self):
         # Farklı cihaz ve tarayıcı kimlikleri (User-Agents) havuzumuz
         self.user_agents = [
-            # Windows Chrome
+            # 1. Windows 11 - Chrome
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            # Mac Safari
+            # 2. Mac - Safari
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-            # Windows Firefox
+            # 3. Windows 11 - Firefox
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-            # Linux Chrome
+            # 4. Linux - Chrome
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            # iPhone Safari (Mobil)
+            # 5. iPhone - Safari
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
-            # Android Chrome (Mobil)
-            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
-            # 6. Windows 11 - Microsoft Edge (Çok yaygın)
+            # 6. Windows 11 - Microsoft Edge
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
-            # 7. Mac - Chrome (Apple kullanıcılarının Chrome'u)
+            # 7. Mac - Chrome
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            # 8. Android - Samsung Internet Browser (Mobil cihazlarda çok sık kullanılır)
+            # 8. Android - Samsung Internet Browser
             "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
-            # 9. iPad - Safari (Tablet trafiği)
+            # 9. iPad - Safari
             "Mozilla/5.0 (iPad; CPU OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
-            # 10. Linux - Firefox (Yazılımcı / Geliştirici trafiği)
+            # 10. Linux - Firefox
             "Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0"
         ]
 
