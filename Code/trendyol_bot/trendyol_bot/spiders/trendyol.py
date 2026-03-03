@@ -1,19 +1,24 @@
 import scrapy
 from scrapy.loader import ItemLoader
 import time
-from ..items import TrendyolBotItem
 import json
 import re
+
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from scrapy.spidermiddlewares.httperror import HttpError
+from twisted.internet.error import DNSLookupError, TimeoutError, TCPTimedOutError, ConnectionRefusedError
+
+
+from ..items import TrendyolBotItem
 from .kategoriler import base_categories   # kategoriler.py'den geldi
 from .fiyatlar import price_ranges         # fiyatlar.py'den geldi
 from .selector import SELECTORS            # selector.py'den geldi
 class TrendyolSpider(scrapy.Spider):
     name = "trendyol"
     allowed_domains = ["trendyol.com"]
-    start_urls = ["https://trendyol.com"]
     
-    # Selector'leri class değişkeni olarak tanımlıyoruz
-    SELECTORS = SELECTORS
+    # URL'de tutulması gereken kritik parametreler (Fiyat ve Satıcıyı belirler)
+    KEEP_PARAMS = {"boutiqueId", "merchantId", "productInfoModalEnabled"}
     MAX_SAYFA_LIMITI = 1
     
     categories = [
@@ -22,6 +27,13 @@ class TrendyolSpider(scrapy.Spider):
         for prc in price_ranges
     ]
 
+    # --- REGEX PRE-COMPILATION (CPU TASARRUFU İÇİN) ---
+    # Döngü içinde tekrar tekrar derlenmemesi için sınıf seviyesinde bir kere derliyoruz.
+    REGEX_RATING_AVG = re.compile(r'"averageRating"\s*:\s*([\d.]+)')
+    REGEX_RATING_VAL = re.compile(r'"ratingValue"\s*:\s*"?([\d.]+)"?')
+    REGEX_RATING_COUNT_1 = re.compile(r'"totalRatingCount"\s*:\s*(\d+)')
+    REGEX_RATING_COUNT_2 = re.compile(r'"ratingCount"\s*:\s*"?(\d+)"?')
+    REGEX_RATING_COUNT_3 = re.compile(r'"reviewCount"\s*:\s*"?(\d+)"?')
 
     def __init__(self, name = None, **kwargs):
         super(TrendyolSpider,self).__init__(name, **kwargs)
@@ -30,14 +42,25 @@ class TrendyolSpider(scrapy.Spider):
         self.scraped_count = 0
         self.logger.info(f"Spider baslatildi | Kombinasyon: {len(self.categories)} | Limit: {self.MAX_SAYFA_LIMITI}")
     
+    @classmethod
+    def clean_url(cls, url):
+        """URL'deki gereksiz takip parametrelerini siler, sadece kritik olanları tutar."""
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        filtered = {k: v for k, v in params.items() if k in cls.KEEP_PARAMS}
+        clean = parsed._replace(query=urlencode(filtered, doseq=True))
+        return urlunparse(clean)
+    
     @staticmethod
     def _headers():
+        # DİKKAT: "User-Agent" buradan silindi! 
+        # Artık bu işi middlewares.py içindeki RandomUserAgentMiddleware dinamik olarak yapacak.
         return {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
             "Cache-Control": "max-age=0",
-            "Referer": "https://www.trendyol.com/",       # 403 cozumu
-            "Origin": "https://www.trendyol.com",          # 403 cozumu
+            "Referer": "https://www.trendyol.com/",
+            "Origin": "https://www.trendyol.com",
             "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
             "Sec-Ch-Ua-Mobile": "?0",
             "Sec-Ch-Ua-Platform": '"Windows"',
@@ -45,8 +68,7 @@ class TrendyolSpider(scrapy.Spider):
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "none",
             "Sec-Fetch-User": "?1",
-            "Upgrade-Insecure-Requests": "1",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            "Upgrade-Insecure-Requests": "1"
         }
         
     #linkleri çekmek için ilk ayarlamaları yapacağız. JavaScript ile çalışan bir site olduğu için Playwright kullanarak sayfanın tam olarak yüklenmesini sağlayacağız.
@@ -80,11 +102,16 @@ class TrendyolSpider(scrapy.Spider):
         self.logger.info(f"Sayfa {current_page}: {len(links)} urun bulundu.")
         
         for link in links:
+            # 301 Redirect yememek için /pd/ (Product Detail) takısını manuel ekliyoruz
+            if "-p-" in link and "/pd/" not in link:
+                link = link.replace(link.split("-p-")[0], "/pd" + link.split("-p-")[0], 1)
+                
             full_url = response.urljoin(link)
-            clean_url = full_url.split('?')[0]
+            cleaned_url = self.clean_url(full_url)
+            
             yield scrapy.Request(
-                url=clean_url,
-                headers=self._headers(), # Ürün detayında zırhı giydik
+                url=cleaned_url,
+                headers=self._headers(),
                 callback=self.parse_items,
                 errback=self.handle_error
             )
@@ -110,15 +137,14 @@ class TrendyolSpider(scrapy.Spider):
 
         json_data = self._get_product_json(response)
         
-        
         if json_data:
-            # JSON Varsa: Temiz veriyi al, eksikleri HTML'den yamala.
             self._load_categories(loader, response, json_data)
             self._load_from_json(loader, json_data)
+            
+            # JSON'dan gelen eksik alanları HTML'den tamamla
             self._load_eksik_alanlar(loader, response) 
         else:
-            # JSON Yoksa: Tamamen HTML'e güven.
-            self.logger.warning(f"JSON-LD yok → HTML Fallback: {response.url}")
+            self.logger.warning(f"JSON-LD yok -> HTML Fallback: {response.url}")
             self._load_categories(loader, response, None)
             self._load_from_html(loader, response)
         
@@ -131,18 +157,17 @@ class TrendyolSpider(scrapy.Spider):
         for script in scripts:
             try:
                 data = json.loads(script)
-                # Bazı sayfalar liste döner, ilkini al
                 if isinstance(data, list): data = data[0]
-                
                 if isinstance(data, dict) and data.get('@type') == 'Product':
                     return data
-            except Exception:
+            except (json.JSONDecodeError, TypeError, KeyError):
+                # Daha spesifik hata yakalama (Geniş exception'dan kaçındık)
                 continue
         return None
 
     # category özgü yapıldı saçma çıktılar tekrar eden çıktıları burada hallettik
     def _load_categories(self, loader, response, json_data):
-        raw_categories = response.css(self.SELECTORS["category"]).getall()
+        raw_categories = response.css(SELECTORS["category"]).getall()
         
         if not raw_categories and json_data and json_data.get("category"):
             cat_data = json_data.get("category")
@@ -151,7 +176,6 @@ class TrendyolSpider(scrapy.Spider):
         if raw_categories:
             clean_categories = []
             seen = set()
-            
             for cat in raw_categories:
                 stripped_cat = cat.strip()
                 if stripped_cat and stripped_cat.lower() not in seen:
@@ -159,182 +183,115 @@ class TrendyolSpider(scrapy.Spider):
                     seen.add(stripped_cat.lower())
             
             final_categories = clean_categories[:4]
-            
             if final_categories:
                 loader.add_value("category", " > ".join(final_categories))
 
     # JSON-LD verisi varsa buradan çekmeye çalışırız. Bu genellikle daha temiz ve düzenli veri sağlar.
     def _load_from_json(self, loader, data):
         
-        # title
-        if data.get("name"):
-            loader.add_value("title", data.get("name"))
+        if data.get("name"): loader.add_value("title", data.get("name"))
         
-        # price
         offers = data.get("offers", {})
         if isinstance(offers, dict) and offers.get("price"):
             loader.add_value("price", str(offers.get("price")))
         
-        # image
         img_data = data.get("image")
         if img_data:
             if isinstance(img_data, list):
-                clean_images = [
-                    img.get('contentUrl') if isinstance(img, dict) else img 
-                    for img in img_data
-                ]
+                clean_images = [img.get('contentUrl') if isinstance(img, dict) else img for img in img_data]
                 loader.add_value("images", clean_images)
             elif isinstance(img_data, dict):
                 loader.add_value("images", img_data.get('contentUrl'))
             else:
                 loader.add_value("images", img_data)
         
-        # description
-        if data.get("description"):
-            loader.add_value("explanation", data.get("description"))
+        if data.get("description"): loader.add_value("explanation", data.get("description"))
         
-        # evaluation
         agg_rating = data.get("aggregateRating", {})
-        if isinstance(agg_rating, dict) and agg_rating.get("ratingValue"):
-            loader.add_value("evaluation", str(agg_rating.get("ratingValue")))
+        if isinstance(agg_rating, dict):
+            if agg_rating.get("ratingValue"): loader.add_value("evaluation", str(agg_rating.get("ratingValue")))
+            if agg_rating.get("ratingCount"): loader.add_value("evaluation_len", str(agg_rating.get("ratingCount")))
             
-        # evaluation_len
-        if isinstance(agg_rating, dict) and agg_rating.get("ratingCount"):
-            loader.add_value("evaluation_len", str(agg_rating.get("ratingCount")))
-            
-        # ATTRIBUTES
         additional_properties = data.get("additionalProperty")
-        
         if additional_properties and isinstance(additional_properties, list):
             features_dict = {}
             for prop in additional_properties:
-                # Her bir özelliğin "name" (anahtar) ve "value" (değer) kısımlarını alıyoruz
                 if isinstance(prop, dict) and prop.get("name") and prop.get("value"):
                     key = str(prop.get("name")).strip()
                     val = str(prop.get("value")).strip()
                     features_dict[key] = val
-            
             if features_dict:
                 loader.add_value("attributes", features_dict)
 
-    
     def _load_eksik_alanlar(self, loader, response):
-        if not loader.get_output_value("attributes"):
-            features_dict = {}
-            attribute_blocks = response.css("div.attributes div.attribute-item")
-            for block in attribute_blocks:
-                key = block.css("div.name::text").get()
-                val = block.css("div.value::text").get()
-                if key and val:
-                    features_dict[key.strip()] = val.strip()
-            if features_dict:
-                loader.add_value("attributes", features_dict)
+        # NOT: Fallback mantığı Pipeline'da veya son item üretilirken çözüleceği için
+        # buraya sadece JSON'da kesinlikle olmayanları çekme mantığı bırakıldı.
         
-        if not loader.get_output_value("evaluation"):
-            m = (re.search(r'"averageRating"\s*:\s*([\d.]+)', response.text) or
-                 re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', response.text))
-            if m: loader.add_value("evaluation", m.group(1))
+        # HTML'den Regex ile hızlı tarama (Pre-compiled regex kullanıyoruz)
+        eval_match = self.REGEX_RATING_AVG.search(response.text) or self.REGEX_RATING_VAL.search(response.text)
+        if eval_match:
+            loader.add_value("evaluation", eval_match.group(1))
 
-        if not loader.get_output_value("evaluation_len"):
-            m = (re.search(r'"totalRatingCount"\s*:\s*(\d+)', response.text) or
-                 re.search(r'"ratingCount"\s*:\s*"?(\d+)"?', response.text))
-            if m: loader.add_value("evaluation_len", m.group(1))
+        count_match = self.REGEX_RATING_COUNT_1.search(response.text) or \
+                      self.REGEX_RATING_COUNT_2.search(response.text) or \
+                      self.REGEX_RATING_COUNT_3.search(response.text)
+        if count_match:
+            loader.add_value("evaluation_len", count_match.group(1))
+
+        # Attributes fallback
+        features_dict = {}
+        attribute_blocks = response.css("div.attributes div.attribute-item")
+        for block in attribute_blocks:
+            key = block.css("div.name::text").get()
+            val = block.css("div.value::text").get()
+            if key and val:
+                features_dict[key.strip()] = val.strip()
+        if features_dict:
+            loader.add_value("attributes", features_dict)
                     
     # JSON-LD verisi yoksa veya eksikse, HTML üzerinden çekmeye çalışırız. Bu genellikle daha karmaşık ve düzensiz olabilir, bu yüzden öncelikli olarak JSON-LD'yi tercih ederiz.
     def _load_from_html(self, loader, response):
-        # title ---
-        title_selectors = self.SELECTORS.get("title")
-        title_found = False
+        title_selectors = SELECTORS.get("title")
         if isinstance(title_selectors, list):
             for selector in title_selectors:
-                # XPath ile tüm text node'ları al
-                if '::text' not in selector:
-                    title_texts = response.css(selector + ' ::text').getall()
-                else:
-                    title_texts = response.css(selector).getall()
-                
+                title_texts = response.css(selector + ' ::text').getall() if '::text' not in selector else response.css(selector).getall()
                 if title_texts:
-                    # Tüm text'leri birleştir ve temizle
-                    full_title = ' '.join([t.strip() for t in title_texts if t.strip()])
-                    # Tırnakları temizle
-                    full_title = full_title.replace('"', '').replace("'", "").strip()
+                    full_title = ' '.join([t.strip() for t in title_texts if t.strip()]).replace('"', '').replace("'", "").strip()
                     if full_title:
                         loader.add_value("title", full_title)
-                        title_found = True
                         break
-                    
-        if not title_found:
-            loader.add_value("title", "-1")
-        
-        # PRICE
-        price_selectors = self.SELECTORS.get("price")
-        price_found = False
+
+        price_selectors = SELECTORS.get("price")
         if isinstance(price_selectors, list):
             for selector in price_selectors:
                 price_values = response.css(selector).getall()
                 if price_values:
                     loader.add_value("price", price_values)
-                    price_found = True
                     break
         else:
             loader.add_css("price", price_selectors)
-            if loader.get_output_value("price"):
-                price_found = True
-                
-        if not price_found:
-            loader.add_value("price", "-1")
-        
-        
-        # EVALUATION
-        if not loader.get_output_value("evaluation"):
-            rating_match = re.search(r'"averageRating"\s*:\s*([\d.]+)', response.text) or \
-                           re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', response.text)
-            
-            if rating_match:
-                loader.add_value("evaluation", rating_match.group(1))
-            else:
-                loader.add_value("evaluation", "-1")
-                
-        # --- DEĞERLENDİRME SAYISI (EVALUATION_LEN) - REGEX ---
-        if not loader.get_output_value("evaluation_len"):
-            count_match = re.search(r'"totalRatingCount"\s*:\s*(\d+)', response.text) or \
-                          re.search(r'"ratingCount"\s*:\s*"?(\d+)"?', response.text) or \
-                          re.search(r'"reviewCount"\s*:\s*"?(\d+)"?', response.text)
-            
-            if count_match:
-                loader.add_value("evaluation_len", count_match.group(1))
-            else:
-                loader.add_value("evaluation_len", "-1")
-        
-        # --- IMAGES ---
-        images_selectors = self.SELECTORS.get("images")
-        images_found = False
 
+        eval_match = self.REGEX_RATING_AVG.search(response.text) or self.REGEX_RATING_VAL.search(response.text)
+        if eval_match: loader.add_value("evaluation", eval_match.group(1))
+
+        count_match = self.REGEX_RATING_COUNT_1.search(response.text) or \
+                      self.REGEX_RATING_COUNT_2.search(response.text) or \
+                      self.REGEX_RATING_COUNT_3.search(response.text)
+        if count_match: loader.add_value("evaluation_len", count_match.group(1))
+
+        images_selectors = SELECTORS.get("images")
         if isinstance(images_selectors, list):
             for selector in images_selectors:
-                # getall() ile galerideki tüm resim linklerini topluyoruz
                 img_values = response.css(selector).getall()
                 if img_values:
-                    # Boş olmayan ve geçerli linkleri temizleyerek alıyoruz
                     clean_imgs = [img.strip() for img in img_values if img.strip()]
                     if clean_imgs:
                         loader.add_value("images", clean_imgs)
-                        images_found = True
                         break
         else:
-            # Tek bir selector tanımlıysa direkt ekle
             loader.add_css("images", images_selectors)
-            if loader.get_output_value("images"):
-                images_found = True
 
-        # ---Hiç görsel bulunamazsa -1 ata ---
-        if not images_found:
-            loader.add_value("images", "-1")
-            
-        # --- EXPLANATION ---
-        explanation_selectors = self.SELECTORS.get("explanation")
-        explanation_found = False
-        
+        explanation_selectors = SELECTORS.get("explanation")
         if isinstance(explanation_selectors, list):
             for selector in explanation_selectors:
                 expl_values = response.css(selector).getall()
@@ -342,45 +299,40 @@ class TrendyolSpider(scrapy.Spider):
                     clean_expl = ' '.join([text.strip() for text in expl_values if text.strip()])
                     if clean_expl:
                         loader.add_value("explanation", clean_expl)
-                        explanation_found = True
                         break
 
-        if not explanation_found:
-            loader.add_value("explanation", "-1")
-            
-        # --- ATTRIBUTES (DİNAMİK ÜRÜN ÖZELLİKLERİ) ---
-        if not loader.get_output_value("attributes"):
-            features_dict = {}
-            
-            # DOM'daki her bir özellik satırını (attribute-item) buluyoruz
-            attribute_blocks = response.css("div.attributes div.attribute-item")
-            
-            # Her bir satırın içine girip name ve value değerlerini çekiyoruz
-            for block in attribute_blocks:
-                key = block.css("div.name::text").get()
-                val = block.css("div.value::text").get()
-                
-                # İkisi de boş değilse sözlüğümüze (dictionary) ekliyoruz
-                if key and val:
-                    features_dict[key.strip()] = val.strip()
-                    
-            # Sözlük dolduysa item'a ekle, boşsa -1 veya uyarı ata
-            if features_dict:
-                loader.add_value("attributes", features_dict)
-            else:
-                loader.add_value("attributes", {"Bilgi": "-1"})
+        features_dict = {}
+        attribute_blocks = response.css("div.attributes div.attribute-item")
+        for block in attribute_blocks:
+            key = block.css("div.name::text").get()
+            val = block.css("div.value::text").get()
+            if key and val:
+                features_dict[key.strip()] = val.strip()
+        if features_dict: loader.add_value("attributes", features_dict)
          
     def handle_error(self, failure):
-        self.logger.error(f"Istek basarisiz oldu! URL: {failure.request.url}")
-        self.logger.error(f"Hata detayi: {repr(failure)}")
-    
+        # --- GELİŞMİŞ LOGLAMA ---
+        # Hata türüne göre nokta atışı tespit yapıyoruz
+        request_url = failure.request.url
+        
+        if failure.check(HttpError):
+            response = failure.value.response
+            self.logger.error(f"HTTP Hatası ({response.status}) | URL: {request_url}")
+            if response.status == 403:
+                self.logger.error("DİKKAT: 403 Forbidden! Ban yemiş olabiliriz veya Captcha'ya düştük.")
+        elif failure.check(DNSLookupError):
+            self.logger.error(f"DNS Hatası (Domain bulunamadı) | URL: {request_url}")
+        elif failure.check(TimeoutError, TCPTimedOutError, ConnectionRefusedError):
+            self.logger.error(f"Zaman Aşımı (Timeout) | Sunucu yanıt vermedi | URL: {request_url}")
+        else:
+            self.logger.error(f"Bilinmeyen Hata | URL: {request_url} | Detay: {repr(failure)}")
+            
     def closed(self, reason):
+        # Not: Gerçek istatistikler artık Pipeline tarafından tutulacak
         duration = time.time() - self.start_time
         self.logger.info("-" * 50)
-        self.logger.info(f"FINAL RAPORU")
+        self.logger.info("SPIDER KAPANIŞ RAPORU")
         self.logger.info(f"Sure: {duration:.2f} saniye ({duration/60:.2f} dakika)")
-        self.logger.info(f"Toplam Urun: {self.scraped_count}")
-        if duration > 0:
-            self.logger.info(f"Hiz: {self.scraped_count / (duration/60):.2f} urun/dakika")
+        self.logger.info(f"Cekilen Link Sayisi: {self.scraped_count}")
         self.logger.info(f"Kapanis Sebebi: {reason}")
         self.logger.info("-" * 50)
