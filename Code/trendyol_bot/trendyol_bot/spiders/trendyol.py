@@ -1,5 +1,4 @@
 import scrapy
-from scrapy_playwright.page import PageMethod
 from scrapy.loader import ItemLoader
 import time
 from ..items import TrendyolBotItem
@@ -15,6 +14,13 @@ class TrendyolSpider(scrapy.Spider):
     
     # Selector'leri class değişkeni olarak tanımlıyoruz
     SELECTORS = SELECTORS
+    MAX_SAYFA_LIMITI = 1
+    
+    categories = [
+        f"{cat}&prc={prc}"
+        for cat in base_categories
+        for prc in price_ranges
+    ]
 
 
     def __init__(self, name = None, **kwargs):
@@ -22,36 +28,35 @@ class TrendyolSpider(scrapy.Spider):
         # çekilen link sayısını ve süreyi takip etmek için değişkenler
         self.start_time = time.time()
         self.scraped_count = 0
-        self.logger.info(f"Trendyol Spider başlatıldı. Başlangıç zamanı: {time.ctime(self.start_time)}")
-        
-        self.categories = []
-        for cat in base_categories:
-            for prc in price_ranges:
-                self.categories.append(f"{cat}&prc={prc}")
+        self.logger.info(f"Spider baslatildi | Kombinasyon: {len(self.categories)} | Limit: {self.MAX_SAYFA_LIMITI}")
     
+    @staticmethod
+    def _headers():
+        return {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cache-Control": "max-age=0",
+            "Referer": "https://www.trendyol.com/",       # 403 cozumu
+            "Origin": "https://www.trendyol.com",          # 403 cozumu
+            "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
         
     #linkleri çekmek için ilk ayarlamaları yapacağız. JavaScript ile çalışan bir site olduğu için Playwright kullanarak sayfanın tam olarak yüklenmesini sağlayacağız.
     def start_requests(self):
-        self.logger.info(f"Toplam {len(self.categories)} kategori için işlem başlatılıyor.")
         for category in self.categories:
             # pi=1 (1. sayfa) parametresi ile başlıyoruz
             url = f"https://www.trendyol.com/{category}&pi=1"
-            self.logger.debug(f"URL istek gönderildi: {url}")
             yield scrapy.Request(
                 url=url,
-                headers={
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Cache-Control": "max-age=0",
-                    "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-                    "Sec-Ch-Ua-Mobile": "?0",
-                    "Sec-Ch-Ua-Platform": '"Windows"',
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "none",
-                    "Sec-Fetch-User": "?1",
-                    "Upgrade-Insecure-Requests": "1"
-                },
+                headers=self._headers(),
                 meta={
                     "category_name": category, # Kategori adını diğer fonksiyona taşıyoruz
                     "page_number": 1           # Sayfa numarasını takip ediyoruz
@@ -66,67 +71,56 @@ class TrendyolSpider(scrapy.Spider):
         category_name = response.meta.get("category_name")
         current_page = response.meta.get("page_number", 1)
         
-        self.logger.info(f"Kategori sayfası yüklendi: {response.url}")
-        
-        # Ürün linklerini topla
         links = response.css("a.product-card::attr(href)").getall()
         
-        # Eğer sayfada ürün varsa:
-        if links:
-            self.logger.info(f"Sayfa {current_page}'de {len(links)} adet link bulundu ve işleniyor.")
-            
-            # 1. Bulunan ürünlerin detay sayfalarına git
-            for link in links:
-                full_url = response.urljoin(link)
-                yield scrapy.Request(
-                    url=full_url,
-                    callback=self.parse_items,
-                    # Detay sayfalarında playwright kullanmıyoruz
-                    errback=self.handle_error
-                )
-            
-            # 2. BİR SONRAKİ SAYFAYA GEÇİŞ YAP (Akıllı Sayfalama)
-            next_page = current_page + 1
-            MAX_SAYFA_LIMITI = 2 # 200 sayfa = 4800 ürün
-            
-            if next_page <= MAX_SAYFA_LIMITI:
-                next_url = f"https://www.trendyol.com/{category_name}&pi={next_page}"
-                
-                yield scrapy.Request(
-                    url=next_url,
-                    meta={
-                        "category_name": category_name,
-                        "page_number": next_page
-                    },
-                    callback=self.parse,
-                    errback=self.handle_error
-                )
-            else:
-                self.logger.info(f"GÜVENLİK FRENİ: Maksimum sayfa limitine ({MAX_SAYFA_LIMITI}) ulaşıldı. Sonraki sayfaya geçiş durduruldu.")
-                
-        # Eğer sayfada hiç ürün yoksa (Kategorinin sonuna geldiysek):
+        if not links:
+            self.logger.info(f"Sayfa {current_page} bos. {category_name} bitti.")
+            return
+
+        self.logger.info(f"Sayfa {current_page}: {len(links)} urun bulundu.")
+        
+        for link in links:
+            full_url = response.urljoin(link)
+            clean_url = full_url.split('?')[0]
+            yield scrapy.Request(
+                url=clean_url,
+                headers=self._headers(), # Ürün detayında zırhı giydik
+                callback=self.parse_items,
+                errback=self.handle_error
+            )
+        
+        next_page = current_page + 1
+        
+        if next_page <= self.MAX_SAYFA_LIMITI:
+            next_url = f"https://www.trendyol.com/{category_name}&pi={next_page}"
+            yield scrapy.Request(
+                url=next_url,
+                headers=self._headers(),
+                meta={"category_name": category_name, "page_number": next_page},
+                callback=self.parse,
+                errback=self.handle_error
+            )
         else:
-            self.logger.info(f"Sayfa {current_page} boş. {category_name} kategorisinin sonuna gelindi!")
+            self.logger.info(f"GÜVENLİK FRENİ: Limit ({self.MAX_SAYFA_LIMITI}) ulaşıldı.")
     # linke gittiğimizde ürünlerin verilerini çektiğimiz yer
     # Urun verilerini cektigimiz ana fonksiyon
     def parse_items(self, response):
-        # bütün herşeyi bu boş loader üzerinden yapacağız. Bu sayede verileri temizleme ve düzenleme işlemlerini daha kolay yapabiliriz.
         loader = ItemLoader(item=TrendyolBotItem(), response=response)
         loader.add_value("url", response.url)
 
-        # JSON-LD verisini cek
         json_data = self._get_product_json(response)
         
+        
         if json_data:
-            # JSON-LD varsa kategori ve diger verileri yukle
+            # JSON Varsa: Temiz veriyi al, eksikleri HTML'den yamala.
             self._load_categories(loader, response, json_data)
             self._load_from_json(loader, json_data)
+            self._load_eksik_alanlar(loader, response) 
         else:
-            # JSON-LD yoksa HTML'den cekmeye calis
-            self.logger.warning(f"JSON-LD bulunamadi, HTML fallback kullaniliyor: {response.url}")
+            # JSON Yoksa: Tamamen HTML'e güven.
+            self.logger.warning(f"JSON-LD yok → HTML Fallback: {response.url}")
             self._load_categories(loader, response, None)
-            
-        self._load_from_html(loader, response)
+            self._load_from_html(loader, response)
         
         self.scraped_count += 1
         yield loader.load_item()
@@ -142,7 +136,7 @@ class TrendyolSpider(scrapy.Spider):
                 
                 if isinstance(data, dict) and data.get('@type') == 'Product':
                     return data
-            except:
+            except Exception:
                 continue
         return None
 
@@ -222,12 +216,32 @@ class TrendyolSpider(scrapy.Spider):
             
             if features_dict:
                 loader.add_value("attributes", features_dict)
-                self.logger.info(f"JSON-LD'den özellikler bulundu: {len(features_dict)} adet")
+
+    
+    def _load_eksik_alanlar(self, loader, response):
+        if not loader.get_output_value("attributes"):
+            features_dict = {}
+            attribute_blocks = response.css("div.attributes div.attribute-item")
+            for block in attribute_blocks:
+                key = block.css("div.name::text").get()
+                val = block.css("div.value::text").get()
+                if key and val:
+                    features_dict[key.strip()] = val.strip()
+            if features_dict:
+                loader.add_value("attributes", features_dict)
+        
+        if not loader.get_output_value("evaluation"):
+            m = (re.search(r'"averageRating"\s*:\s*([\d.]+)', response.text) or
+                 re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', response.text))
+            if m: loader.add_value("evaluation", m.group(1))
+
+        if not loader.get_output_value("evaluation_len"):
+            m = (re.search(r'"totalRatingCount"\s*:\s*(\d+)', response.text) or
+                 re.search(r'"ratingCount"\s*:\s*"?(\d+)"?', response.text))
+            if m: loader.add_value("evaluation_len", m.group(1))
                     
     # JSON-LD verisi yoksa veya eksikse, HTML üzerinden çekmeye çalışırız. Bu genellikle daha karmaşık ve düzensiz olabilir, bu yüzden öncelikli olarak JSON-LD'yi tercih ederiz.
     def _load_from_html(self, loader, response):
-        self.logger.warning(f"JSON-LD eksik, CSS Fallback devrede: {loader.context['response'].url}")
-        
         # title ---
         title_selectors = self.SELECTORS.get("title")
         title_found = False
@@ -246,12 +260,11 @@ class TrendyolSpider(scrapy.Spider):
                     full_title = full_title.replace('"', '').replace("'", "").strip()
                     if full_title:
                         loader.add_value("title", full_title)
-                        self.logger.info(f"Title bulundu: {selector} -> {full_title[:50]}...")
+                        title_found = True
                         break
                     
         if not title_found:
             loader.add_value("title", "-1")
-            self.logger.warning("Title bulunamadı, varsayılan -1 atandı.")              
         
         # PRICE
         price_selectors = self.SELECTORS.get("price")
@@ -261,7 +274,7 @@ class TrendyolSpider(scrapy.Spider):
                 price_values = response.css(selector).getall()
                 if price_values:
                     loader.add_value("price", price_values)
-                    self.logger.info(f"Price bulundu: {selector}")
+                    price_found = True
                     break
         else:
             loader.add_css("price", price_selectors)
@@ -270,7 +283,6 @@ class TrendyolSpider(scrapy.Spider):
                 
         if not price_found:
             loader.add_value("price", "-1")
-            self.logger.warning(f"Fiyat bulunamadı, varsayılan -1 atandı: {response.url}")
         
         
         # EVALUATION
@@ -280,7 +292,6 @@ class TrendyolSpider(scrapy.Spider):
             
             if rating_match:
                 loader.add_value("evaluation", rating_match.group(1))
-                self.logger.info(f"Regex ile Puan bulundu: {rating_match.group(1)}")
             else:
                 loader.add_value("evaluation", "-1")
                 
@@ -292,7 +303,6 @@ class TrendyolSpider(scrapy.Spider):
             
             if count_match:
                 loader.add_value("evaluation_len", count_match.group(1))
-                self.logger.info(f"Regex ile Değerlendirme Sayısı bulundu: {count_match.group(1)}")
             else:
                 loader.add_value("evaluation_len", "-1")
         
@@ -309,7 +319,6 @@ class TrendyolSpider(scrapy.Spider):
                     clean_imgs = [img.strip() for img in img_values if img.strip()]
                     if clean_imgs:
                         loader.add_value("images", clean_imgs)
-                        self.logger.info(f"Images bulundu: {selector} ({len(clean_imgs)} adet)")
                         images_found = True
                         break
         else:
@@ -321,7 +330,6 @@ class TrendyolSpider(scrapy.Spider):
         # ---Hiç görsel bulunamazsa -1 ata ---
         if not images_found:
             loader.add_value("images", "-1")
-            self.logger.warning(f"Görsel hiçbir selector ile bulunamadı: {response.url}")
             
         # --- EXPLANATION ---
         explanation_selectors = self.SELECTORS.get("explanation")
@@ -334,13 +342,11 @@ class TrendyolSpider(scrapy.Spider):
                     clean_expl = ' '.join([text.strip() for text in expl_values if text.strip()])
                     if clean_expl:
                         loader.add_value("explanation", clean_expl)
-                        self.logger.info(f"Explanation bulundu: {selector}")
                         explanation_found = True
                         break
 
         if not explanation_found:
             loader.add_value("explanation", "-1")
-            self.logger.info("Explanation bulunamadı veya boş geldi, -1 atandı.")
             
         # --- ATTRIBUTES (DİNAMİK ÜRÜN ÖZELLİKLERİ) ---
         if not loader.get_output_value("attributes"):
@@ -361,10 +367,8 @@ class TrendyolSpider(scrapy.Spider):
             # Sözlük dolduysa item'a ekle, boşsa -1 veya uyarı ata
             if features_dict:
                 loader.add_value("attributes", features_dict)
-                self.logger.info(f"Dinamik özellikler bulundu: {len(features_dict)} adet")
             else:
                 loader.add_value("attributes", {"Bilgi": "-1"})
-                self.logger.warning("Özellik tablosu bulunamadı veya boş.")
          
     def handle_error(self, failure):
         self.logger.error(f"Istek basarisiz oldu! URL: {failure.request.url}")
