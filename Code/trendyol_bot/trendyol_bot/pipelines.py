@@ -2,7 +2,6 @@ import pymongo
 from itemadapter import ItemAdapter
 from scrapy.exceptions import DropItem
 import re
-import os
 from datetime import datetime, timezone
 
 class TrendyolBotPipeline:
@@ -21,17 +20,28 @@ class TrendyolBotPipeline:
         self.client = pymongo.MongoClient(self.mongo_uri)
         self.db = self.client[self.mongo_db]
         
-        # Koleksiyonlar (Tablolar)
         self.products_col = self.db["products"]
         self.prices_col = self.db["price_history"]
         self.jobs_col = self.db["jobs"]
         
-        # --- KUSURSUZ PERFORMANS İÇİN İNDEKSLER (Background=True ile) ---
-        # background=True sayesinde milyonlarca veri varken bile DB kilitlenmez
+        # İndeksler (background=True ile sistemi kilitlemez)
         self.products_col.create_index("url", unique=True, background=True)
         self.prices_col.create_index([("url", pymongo.ASCENDING), ("date", pymongo.ASCENDING)], unique=True, background=True)
         
+        # --- GÖREV BAŞLANGICI VE İLK HEARTBEAT ---
         self.start_time = datetime.now(timezone.utc)
+        self.job_id = self.start_time.strftime("%Y%m%d_%H%M%S")
+        self.islenen_toplam = 0
+        
+        # Bot çalışmaya başlar başlamaz "Running" statüsünde kayıt açıyoruz
+        self.jobs_col.insert_one({
+            "job_id": self.job_id,
+            "status": "Running",
+            "start_time": self.start_time,
+            "new_items_inserted": 0,
+            "prices_updated": 0,
+            "items_dropped": 0
+        })
 
     def process_item(self, item, spider):
         adapter = ItemAdapter(item)
@@ -97,13 +107,25 @@ class TrendyolBotPipeline:
             upsert=True
         )
 
-        # --- DOĞRU İSTATİSTİK SAYIMI (Claude'un düzeltmesi) ---
-        # Ürün ana tabloya ilk defa eklendiyse (upserted_id varsa), bu kesinlikle yeni üründür.
+        # --- DOĞRU İSTATİSTİK SAYIMI ---
         if product_result.upserted_id:
             self.yeni_urun_sayisi += 1
-        # Ürün zaten vardı, fiyat tablosuna ya yeni gün eklendi ya da bugünün fiyatı güncellendi
         elif price_result.upserted_id or price_result.modified_count > 0:
             self.guncellenen_fiyat_sayisi += 1
+
+        # --- HEARTBEAT (CANLI GÜNCELLEME) ---
+        self.islenen_toplam += 1
+        # Her 50 üründe bir veritabanındaki raporu canlı olarak günceller
+        if self.islenen_toplam % 50 == 0:
+            self.jobs_col.update_one(
+                {"job_id": self.job_id},
+                {"$set": {
+                    "new_items_inserted": self.yeni_urun_sayisi,
+                    "prices_updated": self.guncellenen_fiyat_sayisi,
+                    "items_dropped": self.silinen_sayisi,
+                    "last_ping": datetime.now(timezone.utc)
+                }}
+            )
 
         return item
 
@@ -122,7 +144,7 @@ class TrendyolBotPipeline:
             if len(parts[-1]) == 3: s = s.replace(".", "")
         return round(float(s), 2)
 
-    @staticmetho
+    @staticmethod
     def _sayi_temizle(raw, float_mi: bool, varsayilan):
         if isinstance(raw, list):
             raw = next((r for r in raw if str(r).strip() not in ["-1", "", "None"]), "-1")
@@ -143,24 +165,20 @@ class TrendyolBotPipeline:
     def close_spider(self, spider):
         end_time = datetime.now(timezone.utc)
         
-        # 3. Jobs Koleksiyonu (Operasyon Raporu)
-        job_report = {
-            "job_id": self.start_time.strftime("%Y%m%d_%H%M%S"),
-            "start_time": self.start_time,
-            "end_time": end_time,
-            "duration_seconds": round((end_time - self.start_time).total_seconds(), 2),
-            "new_items_inserted": self.yeni_urun_sayisi,
-            "prices_updated": self.guncellenen_fiyat_sayisi,
-            "items_dropped": self.silinen_sayisi
-        }
-        self.jobs_col.insert_one(job_report)
-        
+        # Bot BİTTİĞİNDE durumu "Completed" olarak güncelliyoruz
+        self.jobs_col.update_one(
+            {"job_id": self.job_id},
+            {"$set": {
+                "status": "Completed",
+                "end_time": end_time,
+                "duration_seconds": round((end_time - self.start_time).total_seconds(), 2),
+                "new_items_inserted": self.yeni_urun_sayisi,
+                "prices_updated": self.guncellenen_fiyat_sayisi,
+                "items_dropped": self.silinen_sayisi
+            }}
+        )
         self.client.close()
             
         spider.logger.info("-" * 50)
-        spider.logger.info("PIPELINE KAPANIŞ RAPORU (MongoDB Verileri)")
-        spider.logger.info(f"Yeni Eklenen Ürün Sayısı: {self.yeni_urun_sayisi}")
-        spider.logger.info(f"Fiyatı/Verisi Güncellenen: {self.guncellenen_fiyat_sayisi}")
-        spider.logger.info(f"Çöpe Atılan (Fiyatsız/Hatalı): {self.silinen_sayisi}")
-        spider.logger.info(f"Job Raporu MongoDB'ye yazıldı.")
+        spider.logger.info(f"JOB RAPORU BİTİRİLDİ: {self.yeni_urun_sayisi} Yeni, {self.guncellenen_fiyat_sayisi} Güncel")
         spider.logger.info("-" * 50)
