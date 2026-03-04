@@ -1,25 +1,37 @@
+import pymongo
 from itemadapter import ItemAdapter
 from scrapy.exceptions import DropItem
 import re
 import os
+from datetime import datetime, timezone
 
 class TrendyolBotPipeline:
 
     def __init__(self):
-        self.seen_urls = set()
-        self.kaydedilen_sayisi = 0
+        self.mongo_uri = "mongodb://localhost:27017/"
+        self.mongo_db = "neuranovav_db"  # Asistanımızın ana veritabanı
+        
+        # İstatistikler
+        self.yeni_urun_sayisi = 0
+        self.guncellenen_fiyat_sayisi = 0
         self.silinen_sayisi = 0
-        self.seen_urls_file = "seen_urls.txt"
 
     def open_spider(self, spider):
-        # Spider başladığında (bir kere) çalışır.
-        # Restart koruması: Önceki URL'leri hafızaya al.
-        if os.path.exists(self.seen_urls_file):
-            with open(self.seen_urls_file, "r", encoding="utf-8") as f:
-                self.seen_urls = set(line.strip() for line in f if line.strip())
+        # Spider başladığında veritabanına bağlan
+        self.client = pymongo.MongoClient(self.mongo_uri)
+        self.db = self.client[self.mongo_db]
         
-        # Dosyayı append modunda açıp spider boyunca açık tutuyoruz.
-        self._seen_file_handle = open(self.seen_urls_file, "a", encoding="utf-8")
+        # Koleksiyonlar (Tablolar)
+        self.products_col = self.db["products"]
+        self.prices_col = self.db["price_history"]
+        self.jobs_col = self.db["jobs"]
+        
+        # --- KUSURSUZ PERFORMANS İÇİN İNDEKSLER (Background=True ile) ---
+        # background=True sayesinde milyonlarca veri varken bile DB kilitlenmez
+        self.products_col.create_index("url", unique=True, background=True)
+        self.prices_col.create_index([("url", pymongo.ASCENDING), ("date", pymongo.ASCENDING)], unique=True, background=True)
+        
+        self.start_time = datetime.now(timezone.utc)
 
     def process_item(self, item, spider):
         adapter = ItemAdapter(item)
@@ -28,43 +40,71 @@ class TrendyolBotPipeline:
         # Burada sadece olduğu gibi alıyoruz, string parçalaması YOK.
         url = adapter.get("url", "")
 
-        # 1. KOPYA KONTROLÜ
-        if url in self.seen_urls:
-            self._drop("Kopya", url, spider)
-
-        self.seen_urls.add(url)
-        self._seen_file_handle.write(url + "\n")
-        # DİKKAT: flush() kullanılmıyor, diske asenkron yazma performansı maksimize edildi.
-
-        # 2. FİYAT TEMİZLİĞİ
+        # 1. FİYAT TEMİZLİĞİ
         price_raw = adapter.get("price", "-1")
         if isinstance(price_raw, list):
             price_raw = next((p for p in price_raw if str(p).strip() not in ["-1", "", "None"]), "-1")
 
         price_str = str(price_raw).strip()
-
         if price_str in ["-1", "", "Yok", "None"]:
             self._drop("Fiyat Yok", url, spider)
 
         try:
-            adapter["price"] = self._fiyat_temizle(price_str)
+            temiz_fiyat = self._fiyat_temizle(price_str)
+            adapter["price"] = temiz_fiyat
         except ValueError:
             self._drop("Fiyat Hatası", url, spider)
 
-        # 3. ÖZELLİK (ATTRIBUTES) KONTROLÜ
+        # 2. ÖZELLİK VE DEĞERLENDİRME TEMİZLİĞİ
         attributes = adapter.get("attributes", {})
         if not attributes or attributes == {"Bilgi": "-1"}:
             adapter["attributes"] = {}
 
-        # 4. DEĞERLENDİRME PUANI VE SAYISI
-        adapter["evaluation"] = self._sayi_temizle(
-            adapter.get("evaluation", "-1"), float_mi=True, varsayilan=-1
-        )
-        adapter["evaluation_len"] = self._sayi_temizle(
-            adapter.get("evaluation_len", "-1"), float_mi=False, varsayilan=-1
+        adapter["evaluation"] = self._sayi_temizle(adapter.get("evaluation", "-1"), float_mi=True, varsayilan=-1)
+        adapter["evaluation_len"] = self._sayi_temizle(adapter.get("evaluation_len", "-1"), float_mi=False, varsayilan=-1)
+
+        # --- MONGODB UPSERT İŞLEMLERİ ---
+        
+        # 1. Products Koleksiyonu (Sabit Veriler)
+        product_data = {
+            "title": adapter.get("title"),
+            "category": adapter.get("category"),
+            "attributes": adapter.get("attributes"),
+            "images": adapter.get("images"),
+            "explanation": adapter.get("explanation"),
+            "last_seen": datetime.now(timezone.utc)
+        }
+        
+        # Ürün varsa günceller, yoksa yeni ekler (Sonucu değişkene alıyoruz)
+        product_result = self.products_col.update_one(
+            {"url": url}, 
+            {"$set": product_data}, 
+            upsert=True
         )
 
-        self.kaydedilen_sayisi += 1
+        # 2. Price History Koleksiyonu (Dinamik/Geçmiş Veriler)
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d") 
+        
+        price_data = {
+            "price": temiz_fiyat,
+            "evaluation": adapter.get("evaluation"),
+            "evaluation_len": adapter.get("evaluation_len")
+        }
+        
+        price_result = self.prices_col.update_one(
+            {"url": url, "date": today_str},
+            {"$set": price_data},
+            upsert=True
+        )
+
+        # --- DOĞRU İSTATİSTİK SAYIMI (Claude'un düzeltmesi) ---
+        # Ürün ana tabloya ilk defa eklendiyse (upserted_id varsa), bu kesinlikle yeni üründür.
+        if product_result.upserted_id:
+            self.yeni_urun_sayisi += 1
+        # Ürün zaten vardı, fiyat tablosuna ya yeni gün eklendi ya da bugünün fiyatı güncellendi
+        elif price_result.upserted_id or price_result.modified_count > 0:
+            self.guncellenen_fiyat_sayisi += 1
+
         return item
 
     def _drop(self, sebep: str, url: str, spider):
@@ -74,29 +114,20 @@ class TrendyolBotPipeline:
     @staticmethod
     def _fiyat_temizle(price_str: str) -> float:
         s = re.sub(r"[^\d.,]", "", price_str)
-        if not s:
-            raise ValueError(f"Fiyat boş: {price_str}")
-
-        if "." in s and "," in s:
-            s = s.replace(".", "").replace(",", ".")
-        elif "," in s:
-            s = s.replace(",", ".")
+        if not s: raise ValueError(f"Fiyat boş: {price_str}")
+        if "." in s and "," in s: s = s.replace(".", "").replace(",", ".")
+        elif "," in s: s = s.replace(",", ".")
         elif "." in s:
             parts = s.split(".")
-            if len(parts[-1]) == 3:
-                s = s.replace(".", "")
-
+            if len(parts[-1]) == 3: s = s.replace(".", "")
         return round(float(s), 2)
 
-    @staticmethod
+    @staticmetho
     def _sayi_temizle(raw, float_mi: bool, varsayilan):
         if isinstance(raw, list):
             raw = next((r for r in raw if str(r).strip() not in ["-1", "", "None"]), "-1")
-
         s = str(raw).strip()
-        if s in ["-1", "", "Yok", "None", "0.0", "0"]:
-            return varsayilan
-
+        if s in ["-1", "", "Yok", "None", "0.0", "0"]: return varsayilan
         try:
             if float_mi:
                 s_clean = re.sub(r"[^\d.,]", "", s).replace(",", ".")
@@ -110,12 +141,26 @@ class TrendyolBotPipeline:
             return varsayilan
 
     def close_spider(self, spider):
-        # İşlem bitince dosyayı güvenlice kapatıyoruz.
-        if hasattr(self, '_seen_file_handle'):
-            self._seen_file_handle.close()
+        end_time = datetime.now(timezone.utc)
+        
+        # 3. Jobs Koleksiyonu (Operasyon Raporu)
+        job_report = {
+            "job_id": self.start_time.strftime("%Y%m%d_%H%M%S"),
+            "start_time": self.start_time,
+            "end_time": end_time,
+            "duration_seconds": round((end_time - self.start_time).total_seconds(), 2),
+            "new_items_inserted": self.yeni_urun_sayisi,
+            "prices_updated": self.guncellenen_fiyat_sayisi,
+            "items_dropped": self.silinen_sayisi
+        }
+        self.jobs_col.insert_one(job_report)
+        
+        self.client.close()
             
         spider.logger.info("-" * 50)
-        spider.logger.info("PIPELINE KAPANIŞ RAPORU (Gerçek Veriler)")
-        spider.logger.info(f"Başarıyla Kaydedilen: {self.kaydedilen_sayisi}")
-        spider.logger.info(f"Çöpe Atılan (Fiyatsız/Kopya): {self.silinen_sayisi}")
+        spider.logger.info("PIPELINE KAPANIŞ RAPORU (MongoDB Verileri)")
+        spider.logger.info(f"Yeni Eklenen Ürün Sayısı: {self.yeni_urun_sayisi}")
+        spider.logger.info(f"Fiyatı/Verisi Güncellenen: {self.guncellenen_fiyat_sayisi}")
+        spider.logger.info(f"Çöpe Atılan (Fiyatsız/Hatalı): {self.silinen_sayisi}")
+        spider.logger.info(f"Job Raporu MongoDB'ye yazıldı.")
         spider.logger.info("-" * 50)
