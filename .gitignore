@@ -77,3 +77,12 @@
 /Code/trendyol_bot/trendyol_bot/spiders/__pycache__
 /Code/trendyol_bot/trendyol_bot/__init__.py
 /Code/trendyol_bot/trendyol_bot/__pycache__
+
+
+.env
+saved_mails.json
+__pycache__/
+*.pyc
+.scrapy/
+daily_mail_sent.json
+zombie_mail_sent.json

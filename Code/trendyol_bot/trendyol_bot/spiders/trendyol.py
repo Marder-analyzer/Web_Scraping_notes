@@ -132,6 +132,7 @@ class TrendyolSpider(scrapy.Spider):
     # linke gittiğimizde ürünlerin verilerini çektiğimiz yer
     # Urun verilerini cektigimiz ana fonksiyon
     def parse_items(self, response):
+        self.current_page = response.meta.get("page_number", 1)
         loader = ItemLoader(item=TrendyolBotItem(), response=response)
         loader.add_value("url", response.url)
 

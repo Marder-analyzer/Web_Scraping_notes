@@ -39,7 +39,10 @@ class TrendyolBotPipeline:
             "job_id": self.job_id,
             "status": "Running",
             "start_time": self.start_time,
-            "stats": self.stats
+            "last_ping": datetime.now(timezone.utc),
+            "stats": self.stats,
+            "total_processed": 0,
+            "current_page": 1
         })
 
     def process_item(self, item, spider):
@@ -115,7 +118,8 @@ class TrendyolBotPipeline:
                 {"$set": {
                     "stats": self.stats,
                     "last_ping": datetime.now(timezone.utc),
-                    "total_processed": self.islenen_toplam
+                    "total_processed": self.islenen_toplam,
+                    "current_page": getattr(spider, 'current_page', 1)
                 }}
             )
 
