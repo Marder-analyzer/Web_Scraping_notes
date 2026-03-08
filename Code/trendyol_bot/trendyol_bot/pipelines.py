@@ -48,6 +48,8 @@ class TrendyolBotPipeline:
     def process_item(self, item, spider):
         adapter = ItemAdapter(item)
         url = adapter.get("url", "")
+        
+        
 
         # 1. FİYAT KONTROLÜ
         price_raw = adapter.get("price", "-1")
@@ -56,7 +58,13 @@ class TrendyolBotPipeline:
 
         price_str = str(price_raw).strip()
         if price_str in ["-1", "", "Yok", "None"]:
+            try:
+                with open("fiyatsiz_cope_gidenler.txt", "a", encoding="utf-8") as f:
+                    f.write(url + "\n")
+            except Exception as e:
+                spider.logger.error(f"Fiyatsiz link kaydedilemedi: {e}")
             self._drop("Fiyat Yok", url, spider, reason="drop_fiyatsiz")
+            
 
         try:
             temiz_fiyat = self._fiyat_temizle(price_str)

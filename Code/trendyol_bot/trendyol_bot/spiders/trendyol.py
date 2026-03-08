@@ -19,7 +19,7 @@ class TrendyolSpider(scrapy.Spider):
     
     # URL'de tutulması gereken kritik parametreler (Fiyat ve Satıcıyı belirler)
     KEEP_PARAMS = {"boutiqueId", "merchantId", "productInfoModalEnabled"}
-    MAX_SAYFA_LIMITI = 1
+    MAX_SAYFA_LIMITI = 9999999
     
     categories = [
         f"{cat}&prc={prc}"
@@ -34,6 +34,9 @@ class TrendyolSpider(scrapy.Spider):
     REGEX_RATING_COUNT_1 = re.compile(r'"totalRatingCount"\s*:\s*(\d+)')
     REGEX_RATING_COUNT_2 = re.compile(r'"ratingCount"\s*:\s*"?(\d+)"?')
     REGEX_RATING_COUNT_3 = re.compile(r'"reviewCount"\s*:\s*"?(\d+)"?')
+    # Fiyat yakalamak için yeni regex'ler (window.__INITIAL_STATE__ içinden)
+    REGEX_PRICE_INITIAL = re.compile(r'"sellingPrice"\s*:\s*\{"value"\s*:\s*([\d.]+)')
+    REGEX_PRICE_DISCOUNT = re.compile(r'"discountedPrice"\s*:\s*\{"value"\s*:\s*([\d.]+)')
 
     def __init__(self, name = None, **kwargs):
         super(TrendyolSpider,self).__init__(name, **kwargs)
@@ -112,6 +115,7 @@ class TrendyolSpider(scrapy.Spider):
             yield scrapy.Request(
                 url=cleaned_url,
                 headers=self._headers(),
+                meta={"page_number": current_page},
                 callback=self.parse_items,
                 errback=self.handle_error
             )
@@ -227,7 +231,14 @@ class TrendyolSpider(scrapy.Spider):
     def _load_eksik_alanlar(self, loader, response):
         # NOT: Fallback mantığı Pipeline'da veya son item üretilirken çözüleceği için
         # buraya sadece JSON'da kesinlikle olmayanları çekme mantığı bırakıldı.
-        
+
+        # --- YENİ ZIRHLI FİYAT KONTROLÜ (GİZLİ JS İÇİNDEN) ---
+        if not loader.get_collected_values('price'):
+            price_match = self.REGEX_PRICE_DISCOUNT.search(response.text) or self.REGEX_PRICE_INITIAL.search(response.text)
+            if price_match:
+                loader.add_value("price", price_match.group(1))
+                self.logger.debug(f"Fiyat JS state'ten kurtarildi: {response.url}")
+
         # HTML'den Regex ile hızlı tarama (Pre-compiled regex kullanıyoruz)
         eval_match = self.REGEX_RATING_AVG.search(response.text) or self.REGEX_RATING_VAL.search(response.text)
         if eval_match:
@@ -262,15 +273,22 @@ class TrendyolSpider(scrapy.Spider):
                         loader.add_value("title", full_title)
                         break
 
-        price_selectors = SELECTORS.get("price")
-        if isinstance(price_selectors, list):
-            for selector in price_selectors:
-                price_values = response.css(selector).getall()
-                if price_values:
-                    loader.add_value("price", price_values)
-                    break
-        else:
-            loader.add_css("price", price_selectors)
+        if not loader.get_collected_values('price'):
+            price_selectors = SELECTORS.get("price")
+            if isinstance(price_selectors, list):
+                for selector in price_selectors:
+                    price_values = response.css(selector).getall()
+                    if price_values:
+                        # Gelen "1.250,99 TL" gibi karmaşık veriyi saf sayıya (1250.99) çeviriyoruz
+                        clean_prices = [p.replace('TL', '').replace('.', '').replace(',', '.').strip() for p in price_values if p.strip()]
+                        if clean_prices:
+                            loader.add_value("price", clean_prices[0]) # Sadece ilk bulduğunu al
+                            break
+            else:
+                price_val = response.css(price_selectors).get()
+                if price_val:
+                    clean_price = price_val.replace('TL', '').replace('.', '').replace(',', '.').strip()
+                    loader.add_value("price", clean_price)
 
         eval_match = self.REGEX_RATING_AVG.search(response.text) or self.REGEX_RATING_VAL.search(response.text)
         if eval_match: loader.add_value("evaluation", eval_match.group(1))
@@ -321,6 +339,8 @@ class TrendyolSpider(scrapy.Spider):
             self.logger.error(f"HTTP Hatası ({response.status}) | URL: {request_url}")
             if response.status == 403:
                 self.logger.error("DİKKAT: 403 Forbidden! Ban yemiş olabiliriz veya Captcha'ya düştük.")
+                with open("403_gecilemeyen_linkler.txt", "a", encoding="utf-8") as f:
+                    f.write(request_url + "\n")
         elif failure.check(DNSLookupError):
             self.logger.error(f"DNS Hatası (Domain bulunamadı) | URL: {request_url}")
         elif failure.check(TimeoutError, TCPTimedOutError, ConnectionRefusedError):
