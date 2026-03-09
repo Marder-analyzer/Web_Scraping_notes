@@ -81,6 +81,8 @@ class LiveProxyUpdater:
     # ─────────────────────────────────────────────────────────────────────────
 
     def spider_opened(self, spider):
+        import logging
+        logging.getLogger('scrapy.core.downloader.tls').setLevel(logging.ERROR)
         try:
             client = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
             self._mongo_col = client[MONGO_DB]["jobs"]

@@ -43,7 +43,8 @@ class TrendyolSpider(scrapy.Spider):
         # çekilen link sayısını ve süreyi takip etmek için değişkenler
         self.start_time = time.time()
         self.scraped_count = 0
-        self.logger.info(f"Spider baslatildi | Kombinasyon: {len(self.categories)} | Limit: {self.MAX_SAYFA_LIMITI}")
+        self.logger.info(f"[Spider] Basladi | kombinasyon={len(self.categories)} | limit={self.MAX_SAYFA_LIMITI}")
+
     
     @classmethod
     def clean_url(cls, url):
@@ -99,10 +100,11 @@ class TrendyolSpider(scrapy.Spider):
         links = response.css("a.product-card::attr(href)").getall()
         
         if not links:
-            self.logger.info(f"Sayfa {current_page} bos. {category_name} bitti.")
+            self.logger.info(f"==> [SAYFA {current_page}] Bitti (link yok) | {category_name}")
             return
 
-        self.logger.info(f"Sayfa {current_page}: {len(links)} urun bulundu.")
+        self.logger.info(f"==> [SAYFA {current_page}] Tamamlandi | {len(links)} Urun Havuza Atildi | {category_name}")
+
         
         for link in links:
             # 301 Redirect yememek için /pd/ (Product Detail) takısını manuel ekliyoruz
@@ -132,7 +134,8 @@ class TrendyolSpider(scrapy.Spider):
                 errback=self.handle_error
             )
         else:
-            self.logger.info(f"GÜVENLİK FRENİ: Limit ({self.MAX_SAYFA_LIMITI}) ulaşıldı.")
+            self.logger.warning(f"[Spider] GÜVENLİK FRENİ: limit={self.MAX_SAYFA_LIMITI} asildi.")
+
     # linke gittiğimizde ürünlerin verilerini çektiğimiz yer
     # Urun verilerini cektigimiz ana fonksiyon
     def parse_items(self, response):
@@ -149,7 +152,7 @@ class TrendyolSpider(scrapy.Spider):
             # JSON'dan gelen eksik alanları HTML'den tamamla
             self._load_eksik_alanlar(loader, response) 
         else:
-            self.logger.warning(f"JSON-LD yok -> HTML Fallback: {response.url}")
+            self.logger.warning(f"[Spider] JSON-LD yok, HTML fallback | {response.url}")
             self._load_categories(loader, response, None)
             self._load_from_html(loader, response)
         
@@ -237,7 +240,7 @@ class TrendyolSpider(scrapy.Spider):
             price_match = self.REGEX_PRICE_DISCOUNT.search(response.text) or self.REGEX_PRICE_INITIAL.search(response.text)
             if price_match:
                 loader.add_value("price", price_match.group(1))
-                self.logger.debug(f"Fiyat JS state'ten kurtarildi: {response.url}")
+                self.logger.debug(f"[Spider] Fiyat JS'ten kurtarildi | {response.url}")
 
         # HTML'den Regex ile hızlı tarama (Pre-compiled regex kullanıyoruz)
         eval_match = self.REGEX_RATING_AVG.search(response.text) or self.REGEX_RATING_VAL.search(response.text)
@@ -336,24 +339,23 @@ class TrendyolSpider(scrapy.Spider):
         
         if failure.check(HttpError):
             response = failure.value.response
-            self.logger.error(f"HTTP Hatası ({response.status}) | URL: {request_url}")
+            self.logger.error(f"[Spider] HTTP {response.status} | {request_url}")
             if response.status == 403:
-                self.logger.error("DİKKAT: 403 Forbidden! Ban yemiş olabiliriz veya Captcha'ya düştük.")
+                self.logger.error("[Spider] 403 Forbidden! Ban veya Captcha.")
                 with open("403_gecilemeyen_linkler.txt", "a", encoding="utf-8") as f:
                     f.write(request_url + "\n")
         elif failure.check(DNSLookupError):
-            self.logger.error(f"DNS Hatası (Domain bulunamadı) | URL: {request_url}")
+            self.logger.error(f"[Spider] DNS hatasi | {request_url}")
         elif failure.check(TimeoutError, TCPTimedOutError, ConnectionRefusedError):
-            self.logger.error(f"Zaman Aşımı (Timeout) | Sunucu yanıt vermedi | URL: {request_url}")
+            self.logger.error(f"[Spider] Timeout | {request_url}")
         else:
-            self.logger.error(f"Bilinmeyen Hata | URL: {request_url} | Detay: {repr(failure)}")
+            self.logger.error(f"[Spider] Bilinmeyen hata | {request_url} | {repr(failure)}")
             
     def closed(self, reason):
-        # Not: Gerçek istatistikler artık Pipeline tarafından tutulacak
         duration = time.time() - self.start_time
-        self.logger.info("-" * 50)
-        self.logger.info("SPIDER KAPANIŞ RAPORU")
-        self.logger.info(f"Sure: {duration:.2f} saniye ({duration/60:.2f} dakika)")
-        self.logger.info(f"Cekilen Link Sayisi: {self.scraped_count}")
-        self.logger.info(f"Kapanis Sebebi: {reason}")
-        self.logger.info("-" * 50)
+        # Madde 11: kapanış raporu — tek blok, temiz
+        self.logger.info(
+            f"[Spider] Kapandi | sebep={reason} | "
+            f"sure={duration:.1f}s ({duration/60:.1f}dk) | "
+            f"cekilen={self.scraped_count}"
+        )
