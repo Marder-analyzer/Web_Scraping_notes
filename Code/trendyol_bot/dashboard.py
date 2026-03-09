@@ -369,6 +369,8 @@ if latest_job:
         c2.info(f"⚡ **Saatlik Ortalama Verim:** ~{hourly_rate:,} ürün/saat")
 
     st.write("")
+    
+    
 
     # ── METRİKLER SATIR 1 ──
     r1c1, r1c2, r1c3, r1c4 = st.columns(4)
@@ -410,11 +412,13 @@ if latest_job:
         f"Sayfa {current_page}",
         help="Botun şu anda Trendyol kategori listesinin kaçıncı sayfasını (pi=X) taradığını gösterir."
     )
+    
+    
 
     st.write("")
 
     # ── METRİKLER SATIR 2 ──
-    r2c1, r2c2, r2c3 = st.columns(3)
+    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
 
     r2c1.metric(
         "✨ Yeni Keşfedilen Ürün",
@@ -430,6 +434,13 @@ if latest_job:
         "🔄 Gün İçi Değişim",
         stats.get("gun_ici_degisim", 0),
         help="Bugün içinde daha önce kaydedilen fiyat veya puan verisi değişmiş olan ürünler."
+    )
+    kat_stats = latest_job.get("kategori_stats", {})
+    benzersiz_kat_sayisi = len(kat_stats)
+    r2c4.metric(
+        label="📂 Kategori Çeşitliliği",
+        value=f"{benzersiz_kat_sayisi} ",
+        help="Botun bu oturumda (Job) taradığı ürünlerin kaç farklı ana kategoriden (reyondan) geldiğini gösterir."
     )
 
     st.markdown("---")
@@ -505,12 +516,31 @@ if latest_job:
         st.info("Kategori verisi için önce botu çalıştırın.")
 
     st.markdown("---")
+    
+    # 1. BÖLÜM: SAATLİK HIZ GRAFİĞİ (FAZ 4 - Madde 15 & 16)
+    st.subheader("⏱️ Saat Bazlı Tarama Performansı")
+    # pipelines (2).py'den gelen veriyi okur
+    hourly_data = latest_job.get("hourly_stats", [])
+    if hourly_data:
+        df_hourly = pd.DataFrame(hourly_data)[["saat", "islenen", "hiz_urun_dk"]]
+        df_hourly.columns = ["Saat", "İşlenen Ürün", "Hız (Ürün/Dk)"]
+        
+        # Hız grafiğini çizgi olarak gösterelim (daha profesyonel durur)
+        fig_speed = px.line(df_hourly, x="Saat", y="Hız (Ürün/Dk)", markers=True, 
+                            title="Anlık Tarama Hızı")
+        st.plotly_chart(fig_speed, use_container_width=True)
+    else:
+        st.info("Saatlik performans verisi henüz oluşmadı (Botun en az 1 saat çalışması lazım).")
+
+    st.markdown("---")
 
     # ── CANLI VERİ AKIŞI ──
+    # 2. BÖLÜM: CANLI VERİ AKIŞI (Son Eklenen 5 Ürün)
     st.subheader("📡 Canlı Veri Akışı (Son Eklenen 5 Ürün)")
     if current_page != "Belirsiz":
         st.caption(f"🔖 Bot şu an Trendyol'da **Sayfa {current_page}** üzerinde tarama yapıyor.")
 
+    # MongoDB'den son 5 ürünü çekiyoruz
     cursor = db.products.find(
         {}, {"title": 1, "category": 1, "last_seen": 1}
     ).sort("last_seen", -1).limit(5)
@@ -520,15 +550,18 @@ if latest_job:
         df_recent = pd.DataFrame(recent_products)
         if "_id" in df_recent.columns:
             df_recent = df_recent.drop(columns=["_id"])
+        
+        # Kategoriyi temizle (pipelines (2).py formatına uygun)
         df_recent["category"] = df_recent["category"].apply(
             lambda x: str(x).split(">")[-1].strip() if x else "-"
         )
+        # Türkiye saatine çevir
         df_recent["last_seen"] = pd.to_datetime(
             df_recent["last_seen"], utc=True
         ).dt.tz_convert("Europe/Istanbul").dt.strftime("%H:%M:%S")
+        
         df_recent = df_recent[["title", "category", "last_seen"]]
         df_recent.columns = ["Ürün Adı", "Kategori", "İşlem Saati"]
-        df_recent.index = range(1, len(df_recent) + 1)
         st.table(df_recent)
     else:
         st.write("Henüz veri akışı yok.")

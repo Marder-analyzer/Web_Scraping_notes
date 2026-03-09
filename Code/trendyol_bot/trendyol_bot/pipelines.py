@@ -21,6 +21,13 @@ class TrendyolBotPipeline:
             "drop_fiyatsiz": 0,
             "drop_hata": 0
         }
+        # FAZ 4 - Madde 15: saat basi hiz takibi
+        self.saat_basi_sayac  = 0
+        self.mevcut_saat      = None
+        self.hourly_snapshots = []
+
+        # FAZ 4 - Madde 17: kategori sayaci
+        self.kategori_sayac = {}
 
     def open_spider(self, spider):
         self.client = pymongo.MongoClient(self.mongo_uri)
@@ -36,22 +43,38 @@ class TrendyolBotPipeline:
             unique=True, background=True
         )
         
-        self.start_time    = datetime.now(timezone.utc)
-        self.job_id        = self.start_time.strftime("%Y%m%d_%H%M%S")
+        self.start_time     = datetime.now(timezone.utc)
         self.islenen_toplam = 0
-        
-        self.jobs_col.insert_one({
-            "job_id":          self.job_id,
-            "status":          "Running",
-            "start_time":      self.start_time,
-            "last_ping":       datetime.now(timezone.utc),
-            "stats":           self.stats,
-            "total_processed": 0,
-            "current_page":    1
-        })
 
-        # Madde 10: pipeline başlangıç logu - sadece 1 satır
-        spider.logger.info(f"[Pipeline] Basladi | job_id={self.job_id}")
+        # FAZ 3: JOBDIR varsa job_id sabit kalir
+        jobdir = spider.settings.get('JOBDIR')
+        if jobdir:
+            self.job_id = jobdir.replace("/", "_").replace("\\", "_")
+        else:
+            self.job_id = self.start_time.strftime("%Y%m%d_%H%M%S")
+
+        # $setOnInsert: kayıt zaten varsa hiçbir şey yazmaz, yoksa oluşturur
+        result = self.jobs_col.update_one(
+            {"job_id": self.job_id},
+            {
+                "$setOnInsert": {
+                    "status":          "Running",
+                    "start_time":      self.start_time,
+                    "stats":           self.stats,
+                    "total_processed": 0,
+                    "current_page":    1
+                },
+                "$set": {
+                    "last_ping": datetime.now(timezone.utc)
+                }
+            },
+            upsert=True
+        )
+
+        if result.upserted_id:
+            spider.logger.info(f"[Pipeline] Yeni oturum | job_id={self.job_id}")
+        else:
+            spider.logger.info(f"[Pipeline] Resume | job_id={self.job_id} | kaldigi yerden devam")
 
     def process_item(self, item, spider):
         adapter  = ItemAdapter(item)
@@ -114,17 +137,50 @@ class TrendyolBotPipeline:
             self.stats["yeni_gun_kaydi"] += 1
         elif price_res.modified_count > 0:
             self.stats["gun_ici_degisim"] += 1
+            
+        # --- FAZ 4: Madde 17 - Kategori sayaci ---
+        kategori = adapter.get("category", "")
+        if kategori:
+            ana_kat = kategori.split(" > ")[-1].strip() if " > " in kategori else kategori
+            self.kategori_sayac[ana_kat] = self.kategori_sayac.get(ana_kat, 0) + 1
 
-        # --- 5. HEARTBEAT — Her 10 üründe bir (sadece DB'ye yaz, konsola değil) ---
+        # --- FAZ 4: Madde 15 - Saat basi snapshot ---
+        simdi = datetime.now(timezone.utc)
+        if simdi.hour != self.mevcut_saat:
+            hiz = round(self.saat_basi_sayac / 60, 1)
+            snapshot = {
+                "saat":        f"{self.mevcut_saat:02d}:00",
+                "islenen":     self.saat_basi_sayac,
+                "hiz_urun_dk": hiz,
+                "zaman":       simdi
+            }
+            self.hourly_snapshots.append(snapshot)
+            self.jobs_col.update_one(
+                {"job_id": self.job_id},
+                {"$push": {"hourly_stats": snapshot}}
+            )
+            spider.logger.info(
+                f"[Pipeline] Saat ozeti | {snapshot['saat']} | "
+                f"{self.saat_basi_sayac} urun | hiz={hiz} urun/dk"
+            )
+            self.mevcut_saat     = simdi.hour
+            self.saat_basi_sayac = 0
+
+        self.saat_basi_sayac += 1
+
+        # --- 5. HEARTBEAT - Her 10 urunde bir ---
         self.islenen_toplam += 1
         if self.islenen_toplam % 10 == 0:
+            top5 = sorted(self.kategori_sayac.items(), key=lambda x: x[1], reverse=True)[:5]
             self.jobs_col.update_one(
                 {"job_id": self.job_id},
                 {"$set": {
                     "stats":           self.stats,
                     "last_ping":       datetime.now(timezone.utc),
                     "total_processed": self.islenen_toplam,
-                    "current_page":    getattr(spider, "current_page", 1)
+                    "current_page":    getattr(spider, "current_page", 1),
+                    "kategori_stats":  self.kategori_sayac,
+                    "top5_kategori":   dict(top5)
                 }}
             )
 
@@ -169,6 +225,41 @@ class TrendyolBotPipeline:
         end_time = datetime.now(timezone.utc)
         duration = round((end_time - self.start_time).total_seconds(), 2)
 
+        # Son saatin snapshot'i
+        if self.saat_basi_sayac > 0:
+            hiz = round(self.saat_basi_sayac / max(duration / 60, 1), 1)
+            snapshot = {
+                "saat":        f"{self.mevcut_saat:02d}:00 (son)",
+                "islenen":     self.saat_basi_sayac,
+                "hiz_urun_dk": hiz,
+                "zaman":       end_time
+            }
+            self.hourly_snapshots.append(snapshot)
+            self.jobs_col.update_one(
+                {"job_id": self.job_id},
+                {"$push": {"hourly_stats": snapshot}}
+            )
+
+        # Madde 16: Genel ortalama
+        if self.hourly_snapshots:
+            ortalama_hiz  = round(sum(s["hiz_urun_dk"] for s in self.hourly_snapshots) / len(self.hourly_snapshots), 1)
+            en_hizli      = max(self.hourly_snapshots, key=lambda s: s["hiz_urun_dk"])
+        else:
+            ortalama_hiz  = round(self.islenen_toplam / max(duration / 60, 1), 1)
+            en_hizli      = {"saat": "-", "hiz_urun_dk": ortalama_hiz}
+
+        # Madde 17: Kategori raporu
+        en_cok = sorted(self.kategori_sayac.items(), key=lambda x: x[1], reverse=True)
+
+        ozet = {
+            "ortalama_hiz_urun_dk": ortalama_hiz,
+            "en_hizli_saat":        en_hizli["saat"],
+            "en_hizli_saat_hiz":    en_hizli["hiz_urun_dk"],
+            "toplam_kategori":      len(self.kategori_sayac),
+            "en_cok_urun_kategori": en_cok[0][0] if en_cok else "-",
+            "en_cok_urun_adet":     en_cok[0][1] if en_cok else 0,
+        }
+
         self.jobs_col.update_one(
             {"job_id": self.job_id},
             {"$set": {
@@ -176,12 +267,14 @@ class TrendyolBotPipeline:
                 "end_time":         end_time,
                 "duration_seconds": duration,
                 "stats":            self.stats,
-                "total_processed":  self.islenen_toplam
+                "total_processed":  self.islenen_toplam,
+                "kategori_stats":   self.kategori_sayac,
+                "top5_kategori":    dict(en_cok[:5]),
+                "ozet":             ozet
             }}
         )
         self.client.close()
 
-        # Madde 10: Session sonu özet — tek blok, sadece WARNING değil INFO seviyesinde
         spider.logger.info(
             f"[Pipeline] Bitti | sure={duration}s | "
             f"toplam={self.islenen_toplam} | "
@@ -189,5 +282,7 @@ class TrendyolBotPipeline:
             f"guncelleme={self.stats['yeni_gun_kaydi']} | "
             f"degisim={self.stats['gun_ici_degisim']} | "
             f"drop_fiyatsiz={self.stats['drop_fiyatsiz']} | "
-            f"drop_hata={self.stats['drop_hata']}"
+            f"drop_hata={self.stats['drop_hata']} | "
+            f"ort_hiz={ortalama_hiz} urun/dk | "
+            f"kategori={len(self.kategori_sayac)}"
         )

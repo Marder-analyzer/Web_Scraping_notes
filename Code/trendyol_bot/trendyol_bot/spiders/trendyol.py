@@ -88,7 +88,7 @@ class TrendyolSpider(scrapy.Spider):
                     "page_number": 1           # Sayfa numarasını takip ediyoruz
                 },
                 callback=self.parse,
-                dont_filter=True,
+                dont_filter=False,
                 errback=self.handle_error
             )
     
