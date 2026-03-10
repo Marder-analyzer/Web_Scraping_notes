@@ -406,14 +406,48 @@ class LiveProxyUpdater:
         return proxy_list
     
     def handle_response(self, response, request, spider):
-        """403/429 HTTP hatalarını yakalar, proxy'yi banlar."""
+        """FAZ 5+6: 403/429 HTTP hatalarını yakalar, proxy banlar + URL hata kaydı."""
         if response.status in [403, 429]:
-            proxy = request.meta.get('proxy')
+            proxy = request.meta.get("proxy")
             if proxy:
                 self._record_ban(proxy)
+            error_type = f"HTTP_{response.status}"
+            self._record_url_error(response.url, proxy or "Direct", error_type)
 
     def handle_failure(self, failure, spider):
-        """Timeout ve bağlantı hatalarını yakalar, proxy'yi banlar."""
-        proxy = failure.request.meta.get('proxy')
+        """FAZ 5+6: Timeout/bağlantı hatalarını yakalar, proxy banlar + URL hata kaydı."""
+        request = failure.request
+        proxy   = request.meta.get("proxy")
         if proxy:
             self._record_ban(proxy)
+        error_type = failure.type.__name__ if failure.type else "UnknownError"
+        self._record_url_error(request.url, proxy or "Direct", error_type)
+        
+    def _record_url_error(self, url: str, proxy: str, error_type: str):
+        if self._db is None:
+            return
+        simdi = datetime.now(timezone.utc)
+        try:
+            self._db["failed_urls"].update_one(
+                {"url": url},
+                {
+                    "$set": {
+                        "hata_tipi":  error_type,
+                        "son_deneme": simdi,
+                        "cozuldu":    False,
+                    },
+                    "$inc":      {"deneme_sayisi": 1},
+                    "$addToSet": {"proxy_listesi": proxy},
+                    "$push": {
+                        "attempts": {
+                            "ts":         simdi,
+                            "proxy":      proxy,
+                            "error_type": error_type,
+                        }
+                    },
+                    "$setOnInsert": {"ilk_hata": simdi}
+                },
+                upsert=True
+            )
+        except Exception as e:
+            log.warning(f"URL hata kaydı yazılamadı | {e}")

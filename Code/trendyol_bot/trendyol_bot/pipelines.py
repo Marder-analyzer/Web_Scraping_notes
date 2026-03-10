@@ -40,6 +40,8 @@ class TrendyolBotPipeline:
 
         self.products_col.create_index("url", unique=True, background=True)
         self.db["proxy_performance"].create_index("proxy", unique=True, background=True)
+        self.db["failed_urls"].create_index("url", unique=True, background=True)
+
         self.prices_col.create_index(
             [("url", pymongo.ASCENDING), ("date", pymongo.ASCENDING)],
             unique=True, background=True
@@ -100,11 +102,7 @@ class TrendyolBotPipeline:
             )
         price_str = str(price_raw).strip()
         if price_str in ["-1", "", "Yok", "None"]:
-            try:
-                with open("fiyatsiz_cope_gidenler.txt", "a", encoding="utf-8") as f:
-                    f.write(url + "\n")
-            except Exception as e:
-                spider.logger.error(f"[Pipeline] Fiyatsiz link kaydedilemedi: {e}")
+            self._record_url_error(url, proxy_used, "price_missing")
             self._drop("Fiyat Yok", url, spider, reason="drop_fiyatsiz", proxy=proxy_used)
 
         try:
@@ -382,3 +380,31 @@ class TrendyolBotPipeline:
             logging.getLogger("pipeline").info(f"[Pipeline] Durum maili gönderildi | {subject}")
         except Exception as e:
             pass  # mail hatası scraping'i durdurmamalı
+        
+    def _record_url_error(self, url: str, proxy: str, error_type: str):
+        """FAZ 6: Fiyatsız/hatalı URL'leri failed_urls koleksiyonuna yazar."""
+        simdi = datetime.now(timezone.utc)
+        try:
+            self.db["failed_urls"].update_one(
+                {"url": url},
+                {
+                    "$set": {
+                        "hata_tipi":  error_type,
+                        "son_deneme": simdi,
+                        "cozuldu":    False,
+                    },
+                    "$inc":      {"deneme_sayisi": 1},
+                    "$addToSet": {"proxy_listesi": proxy},
+                    "$push": {
+                        "attempts": {
+                            "ts":         simdi,
+                            "proxy":      proxy,
+                            "error_type": error_type,
+                        }
+                    },
+                    "$setOnInsert": {"ilk_hata": simdi}
+                },
+                upsert=True
+            )
+        except Exception as e:
+            pass  # hata kaydı scraping'i durdurmamalı

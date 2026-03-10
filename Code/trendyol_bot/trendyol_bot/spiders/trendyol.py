@@ -343,8 +343,6 @@ class TrendyolSpider(scrapy.Spider):
             self.logger.error(f"[Spider] HTTP {response.status} | {request_url}")
             if response.status == 403:
                 self.logger.error("[Spider] 403 Forbidden! Ban veya Captcha.")
-                with open("403_gecilemeyen_linkler.txt", "a", encoding="utf-8") as f:
-                    f.write(request_url + "\n")
         elif failure.check(DNSLookupError):
             self.logger.error(f"[Spider] DNS hatasi | {request_url}")
         elif failure.check(TimeoutError, TCPTimedOutError, ConnectionRefusedError):

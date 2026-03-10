@@ -684,6 +684,94 @@ if latest_job:
                 
         except Exception as e:
             st.error(f"Proxy performans hatası: {e}")
+            
+    
+    st.markdown("---")
+
+    # ── FAZ 6: URL HATA TAKİP MERKEZİ ──
+    st.subheader("🔴 URL Hata Takip Merkezi")
+
+    try:
+        failed_col = db["failed_urls"]
+        toplam_hata    = failed_col.count_documents({})
+        cozulmemis     = failed_col.count_documents({"cozuldu": False})
+        cozulmus       = failed_col.count_documents({"cozuldu": True})
+
+        # ── ÖZET METRİKLER ──
+        m1, m2, m3 = st.columns(3)
+        m1.metric("🔴 Toplam Hatalı URL", f"{toplam_hata:,}")
+        m2.metric("⏳ Çözülmemiş", f"{cozulmemis:,}", delta_color="inverse")
+        m3.metric("✅ Çözülmüş", f"{cozulmus:,}")
+
+        if toplam_hata > 0:
+            f1, f2 = st.columns(2)
+
+            # ── HATA TİPİ DAĞILIMI (pasta grafik) ──
+            with f1:
+                st.markdown("#### 📊 Hata Tipine Göre Dağılım")
+                hata_pipeline = [
+                    {"$group": {"_id": "$hata_tipi", "count": {"$sum": 1}}},
+                    {"$sort": {"count": -1}}
+                ]
+                hata_dagilim = list(failed_col.aggregate(hata_pipeline))
+                if hata_dagilim:
+                    df_hata = pd.DataFrame(hata_dagilim)
+                    df_hata.columns = ["Hata Tipi", "Adet"]
+                    fig_hata = px.pie(df_hata, values="Adet", names="Hata Tipi", hole=0.4,
+                                     color_discrete_sequence=px.colors.sequential.Reds_r)
+                    st.plotly_chart(fig_hata, use_container_width=True)
+
+            # ── ÇÖZÜLMEMIŞ vs ÇÖZÜLMÜŞ ──
+            with f2:
+                st.markdown("#### 🔄 Çözülmemiş vs Çözülmüş")
+                df_durum = pd.DataFrame([
+                    {"Durum": "⏳ Çözülmemiş", "Adet": cozulmemis},
+                    {"Durum": "✅ Çözülmüş",   "Adet": cozulmus},
+                ])
+                fig_durum = px.pie(df_durum, values="Adet", names="Durum", hole=0.4,
+                                   color_discrete_map={"⏳ Çözülmemiş": "#e53935", "✅ Çözülmüş": "#43a047"})
+                st.plotly_chart(fig_durum, use_container_width=True)
+
+            # ── EN ÇOK HATA ALAN URL'LER (Top 10) ──
+            st.markdown("#### 🔗 En Çok Hata Alan URL'ler (Top 10)")
+            top_urls = list(failed_col.find(
+                {}, {"url": 1, "hata_tipi": 1, "deneme_sayisi": 1, "proxy_listesi": 1, "cozuldu": 1}
+            ).sort("deneme_sayisi", -1).limit(10))
+
+            if top_urls:
+                df_urls = pd.DataFrame(top_urls)
+                df_urls["proxy_sayisi"] = df_urls["proxy_listesi"].apply(
+                    lambda x: len(x) if isinstance(x, list) else 0
+                )
+                df_urls["Durum"] = df_urls["cozuldu"].apply(
+                    lambda x: "✅ Çözüldü" if x else "⏳ Bekliyor"
+                )
+                df_urls = df_urls[["url", "hata_tipi", "deneme_sayisi", "proxy_sayisi", "Durum"]].copy()
+                df_urls.columns = ["URL", "Son Hata", "Deneme", "Proxy Sayısı", "Durum"]
+                st.dataframe(df_urls, use_container_width=True, hide_index=True)
+
+            # ── EN ÇOK BAŞARISIZ PROXY'LER ──
+            st.markdown("#### 🛡️ URL Bazlı En Çok Başarısız Proxy'ler")
+            proxy_pipeline = [
+                {"$unwind": "$proxy_listesi"},
+                {"$group": {"_id": "$proxy_listesi", "basarisiz_url": {"$sum": 1}}},
+                {"$sort": {"basarisiz_url": -1}},
+                {"$limit": 10}
+            ]
+            proxy_basarisiz = list(failed_col.aggregate(proxy_pipeline))
+            if proxy_basarisiz:
+                df_pb = pd.DataFrame(proxy_basarisiz)
+                df_pb.columns = ["Proxy", "Başarısız URL Sayısı"]
+                fig_pb = px.bar(df_pb, x="Başarısız URL Sayısı", y="Proxy", orientation="h",
+                                color="Başarısız URL Sayısı", color_continuous_scale="Reds")
+                fig_pb.update_layout(yaxis=dict(autorange="reversed"),
+                                     margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_pb, use_container_width=True)
+        else:
+            st.info("🕐 Henüz hata kaydı yok, bot çalışınca burası dolacak.")
+
+    except Exception as e:
+        st.error(f"URL hata takip hatası: {e}")
 
 else:
     st.warning("Henüz başlatılmış bir görev bulunamadı. Lütfen botu çalıştırın: `scrapy crawl trendyol`")
