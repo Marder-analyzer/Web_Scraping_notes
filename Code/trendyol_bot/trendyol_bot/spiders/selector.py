@@ -28,9 +28,16 @@ SELECTORS = {
         "div.campaign-price-content span::text",
         "div.campaign-price-content p.old-price::text",
         "div.price-wrapper div.price-container span.discounted::text",
+        "div.price-wrapper div.price-view span.discounted::text",
         "div.price-wrapper div.ty-plus-price-original-price::text",
         "div.price-wrapper span.discounted::text",
         "div.price-wrapper div.price-view span.original::text",
+        "div.price-wrapper div.price-container span.discounted::text",
+        "#pdp-page-layout div.price-wrapper span.discounted::text",
+        "div.ty-plus-price-content span::text",
+        "div.product-price-container div.prc-dsc::text",
+        
+
     ],
         
     "images": "img[data-testid='image']::attr(src)",
