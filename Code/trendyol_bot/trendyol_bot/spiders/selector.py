@@ -4,8 +4,8 @@ SELECTORS = {
     "category": "ul.breadcrumb-list li.product-detail-breadcrumbs-item a::text",
         
     "title": [
-        "h1.product-title",  
-        "h1[data-testid='product-title']",
+        "h1.product-title::text",  
+        "h1[data-testid='product-title'] *::text",
         "h1.pr-new-br span.prdct-desc-cntnr-name::text",
         "h1::text"
     ],
