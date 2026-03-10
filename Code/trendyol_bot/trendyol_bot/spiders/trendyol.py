@@ -157,6 +157,7 @@ class TrendyolSpider(scrapy.Spider):
             self._load_from_html(loader, response)
         
         self.scraped_count += 1
+        loader.add_value("proxy_used", response.meta.get("proxy", "Direct"))
         yield loader.load_item()
 
     # JSON-LD verisini çekmek için yardımcı fonksiyon. Bu fonksiyon, sayfadaki tüm script tag'lerini kontrol eder ve Product tipindeki JSON-LD verisini bulur.

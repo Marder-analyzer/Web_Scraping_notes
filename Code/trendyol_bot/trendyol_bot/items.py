@@ -49,3 +49,4 @@ class TrendyolBotItem(scrapy.Item):
     )
     
     attributes = scrapy.Field(output_processor=TakeFirst())
+    proxy_used     = scrapy.Field(output_processor=TakeFirst())

@@ -122,7 +122,7 @@ def send_mail(to_email, subject, html_body, attachment_data=None, attachment_nam
         return False, err
 
 # 1. DÜZELTME: bot_status parametresi düzeltildi ve Türkçe karakterler eklendi
-def build_report_html(job, stats, total_products, total_history, subject_prefix="📊 Rapor", bot_status=None):
+def build_report_html(job, stats, total_products, total_history, subject_prefix="📊 Rapor", bot_status=None , proxy_data=None):
     yeni      = stats.get("yeni_urun", 0)
     gun_kaydi = stats.get("yeni_gun_kaydi", 0)
     degisim   = stats.get("gun_ici_degisim", 0)
@@ -134,11 +134,38 @@ def build_report_html(job, stats, total_products, total_history, subject_prefix=
     end_time   = job.get("end_time") or datetime.now(timezone.utc)
     sure = (end_time.replace(tzinfo=timezone.utc) - start_time.replace(tzinfo=timezone.utc)).total_seconds() if start_time else 0
 
+    # --- PROXY TABLOSU OLUŞTURMA ---
+    # --- PROXY TABLOSU OLUŞTURMA ---
+    proxy_html = ""
+    if proxy_data:
+        satirlar = ""
+        for p in proxy_data:
+            durum = "🚫 Emekli" if p.get("retired") else "✅ Aktif"
+            satirlar += f"""
+            <tr>
+                <td style="padding:6px;font-size:12px">{p.get('proxy','?')}</td>
+                <td style="padding:6px;text-align:center">{p.get('success_count',0)}</td>
+                <td style="padding:6px;text-align:center;color:#c62828"><b>{p.get('ban_count',0)}</b></td>
+                <td style="padding:6px;text-align:center">{durum}</td>
+            </tr>"""
+        proxy_html = f"""
+            <h3>🛡️ Proxy Durumu (Top 5)</h3>
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <tr style="background:#f0f0f0">
+                    <th style="padding:6px;text-align:left">Proxy</th>
+                    <th style="padding:6px">Başarılı</th>
+                    <th style="padding:6px">Ban</th>
+                    <th style="padding:6px">Durum</th>
+                </tr>
+                {satirlar}
+            </table>"""
+
     return f"""
     <html><body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:20px">
     <div style="max-width:600px;margin:auto;background:white;border-radius:12px;padding:24px;box-shadow:0 2px 8px #ccc">
         <h2 style="color:#6a0dad">&#128760; NeuraNovaV Bot Raporu</h2>
         <p style="color:#555">{subject_prefix} &mdash; {datetime.now(TR_TZ).strftime('%d %B %Y %H:%M')}</p>
+        <p style="color:#888;font-size:13px">📊 Canlı dashboard için: <a href="http://localhost:8501" style="color:#6a0dad">http://localhost:8501</a></p>
         <hr/>
         <h3>Operasyon Özeti</h3>
         <table style="width:100%;border-collapse:collapse">
@@ -160,6 +187,7 @@ def build_report_html(job, stats, total_products, total_history, subject_prefix=
             <tr><td style="padding:8px"><b>Toplam Fiyat Geçmişi Kaydı</b></td><td style="padding:8px">{total_history:,}</td></tr>
         </table>
         <hr/>
+        {proxy_html}
         <p style="color:#aaa;font-size:12px">NeuraNovaV Otomatik Raporlama Sistemi</p>
     </div></body></html>
     """
@@ -264,7 +292,9 @@ with st.sidebar:
                 s   = jfm.get("stats", {})
                 tp  = client["neuranovav_db"].products.count_documents({})
                 th  = client["neuranovav_db"].price_history.count_documents({})
-                html = build_report_html(jfm, s, tp, th, "📤 Manuel Rapor", bot_status=jfm_status)
+                
+                proxy_data = list(client["neuranovav_db"]["proxy_performance"].find().sort("ban_count", -1).limit(5))
+                html = build_report_html(jfm, s, tp, th, "📤 Hızlı Rapor", bot_status=jfm_status, proxy_data=proxy_data)
                 with st.spinner("Gönderiliyor..."):
                     ok, err = send_mail(mail_input, "NeuraNovaV Anlık Rapor", html, csv_data, "rapor.csv")
                 if ok:
@@ -293,7 +323,8 @@ with st.sidebar:
                     s   = jfm.get("stats", {})
                     tp  = client["neuranovav_db"].products.count_documents({})
                     th  = client["neuranovav_db"].price_history.count_documents({})
-                    html = build_report_html(jfm, s, tp, th, "📤 Hızlı Rapor", bot_status=jfm_status)
+                    proxy_data = list(client["neuranovav_db"]["proxy_performance"].find().sort("ban_count", -1).limit(5))
+                    html = build_report_html(jfm, s, tp, th, "📤 Hızlı Rapor", bot_status=jfm_status, proxy_data=proxy_data)
                     with st.spinner("Gönderiliyor..."):
                         ok, err = send_mail(m, "NeuraNovaV Hızlı Rapor", html, csv_data, "rapor.csv")
                     if ok:
@@ -306,6 +337,21 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 if not db_online:
     st.error("🚨 **Kritik Hata: Veritabanına Ulaşılamıyor!**")
+    # Mongo koptu maili
+    if "mongo_alert_sent" not in st.session_state:
+        st.session_state["mongo_alert_sent"] = False
+    if not st.session_state["mongo_alert_sent"]:
+        saved = load_saved_mails()
+        if saved:
+            html_alert = f"""
+            <html><body style="font-family:Arial,sans-serif;padding:20px">
+            <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px">
+                <h2 style="color:#c62828">🚨 MongoDB Bağlantısı Koptu!</h2>
+                <p>{datetime.now(TR_TZ).strftime('%d/%m/%Y %H:%M')} itibarıyla veritabanına erişilemiyor.</p>
+                <p style="color:#888;font-size:13px">📊 Dashboard: <a href="http://localhost:8501">http://localhost:8501</a></p>
+            </div></body></html>"""
+            send_mail(saved[0], "🚨 NeuraNovaV: MongoDB Bağlantısı Koptu!", html_alert)
+            st.session_state["mongo_alert_sent"] = True
     st.warning("MongoDB şu anda kapalı veya yanıt vermiyor.")
     st.info("🛠️ Docker Desktop'ı açın, MongoDB container'ını başlatın (▶️), ardından 'Anında Yenile'ye tıklayın.")
     st.stop()
@@ -338,7 +384,8 @@ if latest_job:
             if default_mail and get_zombie_job_id() != job_id:
                 tp   = db.products.count_documents({})
                 th   = db.price_history.count_documents({})
-                html = build_report_html(latest_job, stats, tp, th, "⚠️ Bot Yanıt Vermiyor", bot_status=status_text)
+                proxy_data = list(db["proxy_performance"].find().sort("ban_count", -1).limit(5))
+                html = build_report_html(latest_job, stats, tp, th, "⚠️ Bot Yanıt Vermiyor", bot_status=status_text, proxy_data=proxy_data)
                 ok, _ = send_mail(default_mail, "🚨 NeuraNovaV Bot Yanıt Vermiyor!", html)
                 if ok:
                     set_zombie_job_id(job_id)
@@ -565,6 +612,78 @@ if latest_job:
         st.table(df_recent)
     else:
         st.write("Henüz veri akışı yok.")
+        
+    st.markdown("---")
+
+    # ── FAZ 5: PROXY İSTİHBARAT MERKEZİ ──
+    st.subheader("🛡️ Proxy İstihbarat Merkezi")
+
+    p1, p2 = st.columns(2)
+
+    with p1:
+        st.markdown("#### 🌐 Kaynak Sağlık Durumu (Son 5 Güncelleme)")
+        try:
+            son_loglar = list(db["proxy_logs"].find(
+                {"erisim_ok": True}
+            ).sort("ts", -1).limit(5))
+            
+            if son_loglar:
+                for k in son_loglar:
+                    ts = k.get("ts")
+                    if ts:
+                        ts_tr = ts.replace(tzinfo=timezone.utc).astimezone(TR_TZ)
+                        zaman = ts_tr.strftime("%d/%m %H:%M")
+                    else:
+                        zaman = "-"
+                    st.markdown(
+                        f"✅ **{k.get('kaynak', '?')}** | "
+                        f"{k.get('toplam') or 0} proxy | "
+                        f"TR: {k.get('tr') or 0} | "
+                        f"Çöp: {k.get('cop') or 0} | "
+                        f"+{k.get('yeni_eklenen') or 0} yeni | "
+                        f"_{zaman}_"
+                    )
+            else:
+                st.info("🕐 Bot henüz çalışmadı, kaynak verisi bekleniyor...")
+        except Exception as e:
+            st.error(f"Kaynak log hatası: {e}")
+
+    with p2:
+        st.markdown("#### 📈 Proxy Performans Analizi (Top 10)")
+        try:
+            perf = list(db["proxy_performance"].find().sort("ban_count", -1).limit(10))
+            if perf:
+                df_p = pd.DataFrame(perf)
+                if "proxy" in df_p.columns:
+                    # Eğer proxy ['http://...'] şeklindeyse içindeki metni alır, değilse string'e çevirir
+                    df_p["proxy"] = df_p["proxy"].apply(lambda x: x[0] if isinstance(x, list) else str(x))
+                
+                if "success_count" not in df_p.columns: df_p["success_count"] = 0
+                if "ban_count"     not in df_p.columns: df_p["ban_count"]     = 0
+                if "retired"       not in df_p.columns: df_p["retired"]       = False
+                # Başarı Oranı Hesabı (replace(0,1) ile 0'a bölünme hatası engellenir)
+                toplam = df_p["success_count"] + df_p["ban_count"]
+                df_p["Başarı %"] = (df_p["success_count"] / toplam.replace(0, 1) * 100).round(1)
+                
+                # Durum metni (Emoji desteği ile)
+                df_p["Durum"] = df_p["retired"].apply(lambda x: "🚫 Emekli" if x else "✅ Aktif")
+                
+                # Tabloyu son haline getir
+                df_goster = df_p[["proxy", "success_count", "ban_count", "Başarı %", "Durum"]].copy()
+                df_goster.columns = ["Proxy Adresi", "Başarılı", "Ban", "Başarı %", "Durum"]
+                
+                # Renklendirme yapmadan düz tablo olarak bas (Daha güvenli)
+                st.dataframe(df_goster, use_container_width=True, hide_index=True)
+                
+                # Emeklilik Uyarısı (Madde 20)
+                emekli_sayisi = int(df_p["retired"].sum())
+                if emekli_sayisi > 0:
+                    st.warning(f"⚠️ {emekli_sayisi} proxy emekliye ayrıldı (10+ ban)")
+            else:
+                st.info("🕐 Bot henüz çalışmadı, proxy verisi bekleniyor...")
+                
+        except Exception as e:
+            st.error(f"Proxy performans hatası: {e}")
 
 else:
     st.warning("Henüz başlatılmış bir görev bulunamadı. Lütfen botu çalıştırın: `scrapy crawl trendyol`")

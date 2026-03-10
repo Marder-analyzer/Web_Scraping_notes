@@ -5,22 +5,23 @@ from scrapy.exceptions import DropItem
 import re
 from datetime import datetime, timezone
 
-# pymongo'nun kendi DEBUG gürültüsünü kapat (madde 9)
+# pymongo'nun kendi DEBUG gürültüsünü kapat
 logging.getLogger("pymongo").setLevel(logging.WARNING)
 
 class TrendyolBotPipeline:
 
     def __init__(self):
         self.mongo_uri = "mongodb://localhost:27017/"
-        self.mongo_db = "neuranovav_db"
-        
+        self.mongo_db  = "neuranovav_db"
+
         self.stats = {
-            "yeni_urun": 0,
-            "yeni_gun_kaydi": 0,
+            "yeni_urun":       0,
+            "yeni_gun_kaydi":  0,
             "gun_ici_degisim": 0,
-            "drop_fiyatsiz": 0,
-            "drop_hata": 0
+            "drop_fiyatsiz":   0,
+            "drop_hata":       0
         }
+
         # FAZ 4 - Madde 15: saat basi hiz takibi
         self.saat_basi_sayac  = 0
         self.mevcut_saat      = None
@@ -31,20 +32,22 @@ class TrendyolBotPipeline:
 
     def open_spider(self, spider):
         self.client = pymongo.MongoClient(self.mongo_uri)
-        self.db = self.client[self.mongo_db]
-        
+        self.db     = self.client[self.mongo_db]
+
         self.products_col = self.db["products"]
         self.prices_col   = self.db["price_history"]
         self.jobs_col     = self.db["jobs"]
-        
+
         self.products_col.create_index("url", unique=True, background=True)
+        self.db["proxy_performance"].create_index("proxy", unique=True, background=True)
         self.prices_col.create_index(
             [("url", pymongo.ASCENDING), ("date", pymongo.ASCENDING)],
             unique=True, background=True
         )
-        
+
         self.start_time     = datetime.now(timezone.utc)
         self.islenen_toplam = 0
+        self.mevcut_saat    = self.start_time.hour
 
         # FAZ 3: JOBDIR varsa job_id sabit kalir
         jobdir = spider.settings.get('JOBDIR')
@@ -53,7 +56,6 @@ class TrendyolBotPipeline:
         else:
             self.job_id = self.start_time.strftime("%Y%m%d_%H%M%S")
 
-        # $setOnInsert: kayıt zaten varsa hiçbir şey yazmaz, yoksa oluşturur
         result = self.jobs_col.update_one(
             {"job_id": self.job_id},
             {
@@ -62,11 +64,12 @@ class TrendyolBotPipeline:
                     "start_time":      self.start_time,
                     "stats":           self.stats,
                     "total_processed": 0,
-                    "current_page":    1
+                    "current_page":    1,
+                    "hourly_stats":    [],
+                    "kategori_stats":  {},
+                    "ozet":            {}
                 },
-                "$set": {
-                    "last_ping": datetime.now(timezone.utc)
-                }
+                "$set": {"last_ping": datetime.now(timezone.utc)}
             },
             upsert=True
         )
@@ -75,18 +78,26 @@ class TrendyolBotPipeline:
             spider.logger.info(f"[Pipeline] Yeni oturum | job_id={self.job_id}")
         else:
             spider.logger.info(f"[Pipeline] Resume | job_id={self.job_id} | kaldigi yerden devam")
+            
+        # FAZ 5: Bot başladı maili
+        self._send_status_mail(
+            subject="🟢 NeuraNovaV Bot Başladı",
+            baslik="Bot Çalışmaya Başladı",
+            renk="#2e7d32",
+            mesaj=f"Job ID: <b>{self.job_id}</b><br>Başlangıç: {self.start_time.strftime('%d/%m/%Y %H:%M')} UTC"
+        )
 
     def process_item(self, item, spider):
-        adapter  = ItemAdapter(item)
-        url      = adapter.get("url", "")
+        adapter    = ItemAdapter(item)
+        url        = adapter.get("url", "")
+        proxy_used = adapter.get("proxy_used", "Direct")
 
-        # --- 1. FİYAT KONTROLÜ ---
+        # --- 1. FIYAT KONTROLU ---
         price_raw = adapter.get("price", "-1")
         if isinstance(price_raw, list):
             price_raw = next(
                 (p for p in price_raw if str(p).strip() not in ["-1", "", "None"]), "-1"
             )
-
         price_str = str(price_raw).strip()
         if price_str in ["-1", "", "Yok", "None"]:
             try:
@@ -94,23 +105,22 @@ class TrendyolBotPipeline:
                     f.write(url + "\n")
             except Exception as e:
                 spider.logger.error(f"[Pipeline] Fiyatsiz link kaydedilemedi: {e}")
-            self._drop("Fiyat Yok", url, spider, reason="drop_fiyatsiz")
+            self._drop("Fiyat Yok", url, spider, reason="drop_fiyatsiz", proxy=proxy_used)
 
         try:
-            temiz_fiyat    = self._fiyat_temizle(price_str)
+            temiz_fiyat      = self._fiyat_temizle(price_str)
             adapter["price"] = temiz_fiyat
         except ValueError:
-            self._drop("Fiyat Hatası", url, spider, reason="drop_hata")
+            self._drop("Fiyat Hatasi", url, spider, reason="drop_hata", proxy=proxy_used)
 
-        # --- 2. DİĞER TEMİZLİKLER ---
+        # --- 2. DIGER TEMIZLIKLER ---
         attributes = adapter.get("attributes", {})
         if not attributes or attributes == {"Bilgi": "-1"}:
             adapter["attributes"] = {}
-
-        adapter["evaluation"]     = self._sayi_temizle(adapter.get("evaluation", "-1"),     float_mi=True,  varsayilan=-1)
+        adapter["evaluation"]     = self._sayi_temizle(adapter.get("evaluation",     "-1"), float_mi=True,  varsayilan=-1)
         adapter["evaluation_len"] = self._sayi_temizle(adapter.get("evaluation_len", "-1"), float_mi=False, varsayilan=-1)
 
-        # --- 3. VERİTABANI İŞLEMLERİ ---
+        # --- 3. VERITABANI ISLEMLERI ---
         product_data = {"last_seen": datetime.now(timezone.utc)}
         for key in ["title", "category", "attributes", "images", "explanation"]:
             val = adapter.get(key)
@@ -130,14 +140,14 @@ class TrendyolBotPipeline:
             upsert=True
         )
 
-        # --- 4. SAYAÇ ---
+        # --- 4. SAYAC ---
         if prod_res.upserted_id:
             self.stats["yeni_urun"] += 1
         elif price_res.upserted_id:
             self.stats["yeni_gun_kaydi"] += 1
         elif price_res.modified_count > 0:
             self.stats["gun_ici_degisim"] += 1
-            
+
         # --- FAZ 4: Madde 17 - Kategori sayaci ---
         kategori = adapter.get("category", "")
         if kategori:
@@ -184,16 +194,22 @@ class TrendyolBotPipeline:
                 }}
             )
 
+        # FAZ 5: Madde 20 — başarılı ürün için proxy performans kaydı
+        self._update_proxy_perf(proxy_used, is_ban=False)
+
         return item
 
-    def _drop(self, sebep: str, url: str, spider, reason="drop_hata"):
+    def _drop(self, sebep, url, spider, reason="drop_hata", proxy=None):
         self.stats[reason] += 1
+        # FAZ 5: Madde 20 — drop anında proxy ban kaydı
+        if proxy and proxy != "Direct":
+            self._update_proxy_perf(proxy, is_ban=True)
         raise DropItem(f"DROP ({sebep}): {url}")
 
     @staticmethod
-    def _fiyat_temizle(price_str: str) -> float:
+    def _fiyat_temizle(price_str):
         s = re.sub(r"[^\d.,]", "", price_str)
-        if not s: raise ValueError(f"Fiyat boş: {price_str}")
+        if not s: raise ValueError(f"Fiyat bos: {price_str}")
         if "." in s and "," in s:
             s = s.replace(".", "").replace(",", ".")
         elif "," in s:
@@ -205,7 +221,7 @@ class TrendyolBotPipeline:
         return round(float(s), 2)
 
     @staticmethod
-    def _sayi_temizle(raw, float_mi: bool, varsayilan):
+    def _sayi_temizle(raw, float_mi, varsayilan):
         if isinstance(raw, list):
             raw = next((r for r in raw if str(r).strip() not in ["-1", "", "None"]), "-1")
         s = str(raw).strip()
@@ -220,6 +236,35 @@ class TrendyolBotPipeline:
                 return int(s_clean) if s_clean else varsayilan
         except Exception:
             return varsayilan
+
+    def _update_proxy_perf(self, proxy: str, is_ban: bool):
+        """FAZ 5: Madde 20 — Proxy başarı/ban sayacı."""
+        if not proxy or proxy == "Direct":
+            return
+        simdi = datetime.now(timezone.utc)
+        try:
+            if is_ban:
+                self.db["proxy_performance"].update_one(
+                    {"proxy": proxy},
+                    {
+                        "$inc":         {"ban_count": 1},
+                        "$set":         {"last_banned": simdi},
+                        "$setOnInsert": {"first_seen": simdi, "success_count": 0, "retired": False}
+                    },
+                    upsert=True
+                )
+            else:
+                self.db["proxy_performance"].update_one(
+                    {"proxy": proxy},
+                    {
+                        "$inc":         {"success_count": 1},
+                        "$set":         {"last_seen": simdi},
+                        "$setOnInsert": {"first_seen": simdi, "ban_count": 0, "retired": False}
+                    },
+                    upsert=True
+                )
+        except Exception as e:
+            pass  # proxy log hatası scraping'i durdurmamalı
 
     def close_spider(self, spider):
         end_time = datetime.now(timezone.utc)
@@ -273,6 +318,20 @@ class TrendyolBotPipeline:
                 "ozet":             ozet
             }}
         )
+        
+        # FAZ 5: Bot bitti maili
+        self._send_status_mail(
+            subject="🔴 NeuraNovaV Bot Tamamlandı",
+            baslik="Scraping Tamamlandı",
+            renk="#1565c0",
+            mesaj=f"Job ID: <b>{self.job_id}</b><br>"
+                f"Toplam: <b>{self.islenen_toplam}</b> ürün<br>"
+                f"Yeni: <b>{self.stats['yeni_urun']}</b> | "
+                f"Güncelleme: <b>{self.stats['yeni_gun_kaydi']}</b> | "
+                f"Drop: <b>{self.stats['drop_fiyatsiz'] + self.stats['drop_hata']}</b><br>"
+                f"Süre: <b>{round(duration/60, 1)}</b> dakika"
+        )
+        
         self.client.close()
 
         spider.logger.info(
@@ -286,3 +345,40 @@ class TrendyolBotPipeline:
             f"ort_hiz={ortalama_hiz} urun/dk | "
             f"kategori={len(self.kategori_sayac)}"
         )
+        
+    def _send_status_mail(self, subject, baslik, renk, mesaj):
+        """Bot durum bildirimi maili gönderir."""
+        try:
+            import smtplib, os, json
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
+            from dotenv import load_dotenv
+            load_dotenv()
+            sender    = os.getenv("MAIL_SENDER", "")
+            password  = os.getenv("MAIL_APP_PASS", "")
+            recipient = None
+            if os.path.exists("saved_mails.json"):
+                with open("saved_mails.json") as f:
+                    mails = json.load(f)
+                    recipient = mails[0] if mails else None
+            if not sender or not password or not recipient:
+                return
+            html = f"""
+            <html><body style="font-family:Arial,sans-serif;padding:20px">
+            <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px;box-shadow:0 2px 8px #ccc">
+                <h2 style="color:{renk}">{baslik}</h2>
+                <p>{mesaj}</p>
+                <p style="color:#888;font-size:13px">📊 Dashboard: <a href="http://localhost:8501" style="color:#6a0dad">http://localhost:8501</a></p>
+                <p style="color:#aaa;font-size:12px">NeuraNovaV Otomatik Bildirim Sistemi</p>
+            </div></body></html>"""
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"]    = f"NeuraNovaV Bot <{sender}>"
+            msg["To"]      = recipient
+            msg.attach(MIMEText(html, "html"))
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(sender, password)
+                server.sendmail(sender, recipient, msg.as_string())
+            logging.getLogger("pipeline").info(f"[Pipeline] Durum maili gönderildi | {subject}")
+        except Exception as e:
+            pass  # mail hatası scraping'i durdurmamalı

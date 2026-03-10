@@ -28,6 +28,7 @@ TR_PREFIXES = (
 )
 
 SLEEP_ON_EMPTY = 600      # Madde 7: havuz boşalınca uyku süresi (10 dk = 600 sn)
+BAN_LIMIT       = 10    # Madde 20: kaç ban sonra retired
 MONGO_URI      = "mongodb://localhost:27017/"
 MONGO_DB       = "neuranovav_db"    # pipelines.py ile aynı
 
@@ -56,10 +57,10 @@ class LiveProxyUpdater:
     """
 
     def __init__(self, crawler):
-        self.crawler    = crawler
-        self.interval   = 900
-        self._sleeping  = False
-        self._mongo_col = None
+        self.crawler = crawler
+        self.interval = 900
+        self._sleeping = False
+        self._db = None
 
         # Middleware başlamadan önce dosya hazır olmalı — içi boşsa NotConfigured fırlatır
         import os
@@ -74,6 +75,9 @@ class LiveProxyUpdater:
         ext = cls(crawler)
         crawler.signals.connect(ext.spider_opened, signal=signals.spider_opened)
         crawler.signals.connect(ext.spider_closed, signal=signals.spider_closed)
+        
+        crawler.signals.connect(ext.handle_response, signal=signals.response_received)
+        crawler.signals.connect(ext.handle_failure, signal=signals.spider_error)
         return ext
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -85,7 +89,7 @@ class LiveProxyUpdater:
         logging.getLogger('scrapy.core.downloader.tls').setLevel(logging.ERROR)
         try:
             client = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
-            self._mongo_col = client[MONGO_DB]["jobs"]
+            self._db  = client[MONGO_DB]
         except Exception as e:
             log.warning(f"mongo bağlantısı yok, proxy logu atlanacak | {e}")
 
@@ -122,15 +126,18 @@ class LiveProxyUpdater:
         """
         result = {
             "all": [], "tr": [], "foreign": [],
-            "source": None, "trash": 0, "source_reachable": False
+            "source": None, "trash": 0, "source_reachable": False, "source_attempts": []
         }
 
         for url in PROXY_SOURCES:
+            source_name = url.split("/")[3]
+            attempt     = {"kaynak": source_name, "erisim_ok": False,
+                           "toplam": 0, "tr": 0, "yabanci": 0, "cop": 0}
             try:
                 req  = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
                 resp = urllib.request.urlopen(req, timeout=10)
                 data = resp.read().decode("utf-8")
-                result["source_reachable"] = True
+                
 
                 proxies = []
                 trash   = 0
@@ -143,30 +150,39 @@ class LiveProxyUpdater:
                         proxies.append(f"http://{line}")
                     else:
                         trash += 1
+                        
+                tr_list      = [p for p in proxies if _is_tr(p)]
+                foreign_list = [p for p in proxies if not _is_tr(p)]
+
+                attempt.update({
+                    "erisim_ok": True,
+                    "toplam":    len(proxies),
+                    "tr":        len(tr_list),
+                    "yabanci":   len(foreign_list),
+                    "cop":       trash,
+                })
+                result["source_attempts"].append(attempt)
 
                 if proxies:
-                    tr_list      = [p for p in proxies if _is_tr(p)]
-                    foreign_list = [p for p in proxies if not _is_tr(p)]
-
                     result.update({
-                        "all":     proxies,
-                        "tr":      tr_list,
-                        "foreign": foreign_list,
-                        "source":  url.split("/")[3],
-                        "trash":   trash,
+                        "all":              proxies,
+                        "tr":               tr_list,
+                        "foreign":          foreign_list,
+                        "source":           source_name,
+                        "trash":            trash,
+                        "source_reachable": True,
                     })
-
                     log.info(
-                        f"kaynak OK | {result['source']} | "
-                        f"toplam: {len(proxies)} | "
-                        f"TR: {len(tr_list)} | "
-                        f"yabancı: {len(foreign_list)} | "
-                        f"çöp: {trash}"
+                        f"kaynak OK | {source_name} | "
+                        f"toplam: {len(proxies)} | TR: {len(tr_list)} | "
+                        f"yabancı: {len(foreign_list)} | çöp: {trash}"
                     )
                     return result
 
             except Exception as e:
-                log.warning(f"kaynak başarısız | {url.split('/')[3]} | {e}")
+                attempt["hata"] = str(e)
+                result["source_attempts"].append(attempt)
+                log.warning(f"kaynak başarısız | {source_name} | {e}")
 
         log.error("tüm proxy kaynakları erişilemez!")
         return result
@@ -182,13 +198,14 @@ class LiveProxyUpdater:
         Madde 6: TR proxyleri listenin başına alır.
         Madde 7: havuz boşsa uyku moduna girer, kendi IP asla kullanılmaz.
         """
+
         if not result["all"]:
             self._enter_sleep_mode()
             return
-
+        
         # Madde 6: TR önce, yabancı sonra
         ordered = result["tr"] + result["foreign"]
-
+        ordered = self._filter_retired(ordered)
         added          = 0
         banned_removed = 0
         mw_ref         = None
@@ -215,6 +232,7 @@ class LiveProxyUpdater:
                         mw.proxies.proxies.pop(p, None)
                         mw.proxies.unchecked.discard(p)
                         banned_removed += 1
+                        self._record_ban(p)  
 
                     break
 
@@ -224,14 +242,15 @@ class LiveProxyUpdater:
         # Madde 4: proxies.txt güncelle — banlılar hariç
         try:
             if mw_ref is not None:
-                active_proxies = list(mw_ref.proxies.proxies.keys())
+                active = list(mw_ref.proxies.proxies.keys())
             else:
-                active_proxies = ordered
-
+                active = ordered
             with open("proxies.txt", "w", encoding="utf-8") as f:
-                f.write("\n".join(active_proxies) + "\n")
+                f.write("\n".join(active) + "\n")
         except Exception as e:
             log.warning(f"proxies.txt yazılamadı | {e}")
+
+        result["yeni_eklenen"] = added
 
         log.info(
             f"güncelleme tamam | "
@@ -241,8 +260,7 @@ class LiveProxyUpdater:
             f"çöp: {result['trash']}"
         )
 
-        # Madde 5: jobs koleksiyonuna kısa log
-        self._log_to_mongo(result, added, banned_removed)
+        self._log_source_status(result)
 
         if self._sleeping:
             self._sleeping = False
@@ -259,27 +277,143 @@ class LiveProxyUpdater:
             f"GÜVENL MOD: kendi IP kullanılmıyor | "
             f"{SLEEP_ON_EMPTY // 60} dk sonra tekrar denenecek"
         )
+        self._send_proxy_alert()
         reactor.callLater(SLEEP_ON_EMPTY, self._trigger_update)
 
-    def _log_to_mongo(self, result: dict, added: int, banned_removed: int):
-        """Madde 5: jobs koleksiyonuna proxy log notu (yeni koleksiyon açılmaz)."""
-        if self._mongo_col is None:
-            return
+    def _send_proxy_alert(self):
+        """Tüm proxy kaynakları erişilemezse dashboard'daki default mail'e bildirim atar."""
         try:
-            self._mongo_col.update_one(
-                {"type": "proxy_log"},
-                {"$push": {"updates": {
-                    "ts":               datetime.now(timezone.utc),
-                    "kaynak":           result.get("source", "bilinmiyor"),
-                    "kaynak_erisim":    result.get("source_reachable", False),
-                    "toplam_cekilen":   len(result["all"]),
-                    "tr_adet":          len(result["tr"]),
-                    "yabanci_adet":     len(result["foreign"]),
-                    "cop_adet":         result["trash"],
-                    "yeni_eklenen":     added,
-                    "banlanan_silinen": banned_removed,
-                }}},
-                upsert=True
-            )
+            import smtplib, os
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
+            from dotenv import load_dotenv
+            load_dotenv()
+            sender   = os.getenv("MAIL_SENDER", "")
+            password = os.getenv("MAIL_APP_PASS", "")
+            # Alıcıyı saved_mails.json'dan oku
+            import json
+            recipient = None
+            if os.path.exists("saved_mails.json"):
+                with open("saved_mails.json") as f:
+                    mails = json.load(f)
+                    recipient = mails[0] if mails else None
+            if not sender or not password or not recipient:
+                log.warning("proxy alert maili gönderilemedi | mail ayarları eksik")
+                return
+            simdi = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+            html  = f"""
+            <html><body style="font-family:Arial,sans-serif;padding:20px">
+            <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px;box-shadow:0 2px 8px #ccc">
+                <h2 style="color:#c62828">🚨 Proxy Kaynakları Erişilemez!</h2>
+                <p>{simdi} itibarıyla tüm GitHub proxy kaynakları yanıt vermedi.</p>
+                <ul>
+                    <li>monosans</li><li>TheSpeedX</li><li>ShiftyTR (http)</li><li>ShiftyTR (https)</li>
+                </ul>
+                <p>Bot güvenli modda bekliyor, kendi IP kullanılmıyor.</p>
+                <p style="color:#aaa;font-size:12px">NeuraNovaV Otomatik Uyarı Sistemi</p>
+            </div></body></html>"""
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = "🚨 NeuraNovaV: Proxy Kaynakları Erişilemez"
+            msg["From"]    = f"NeuraNovaV Bot <{sender}>"
+            msg["To"]      = recipient
+            msg.attach(MIMEText(html, "html"))
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(sender, password)
+                server.sendmail(sender, recipient, msg.as_string())
+            log.info(f"proxy alert maili gönderildi | {recipient}")
         except Exception as e:
-            log.warning(f"mongo log hatası | {e}")
+            log.warning(f"proxy alert maili gönderilemedi | {e}")
+
+    def _log_source_status(self, result: dict):
+        """
+        Madde 19 & 21: Her kaynak denemesini proxy_logs koleksiyonuna yazar.
+        Başarısız kaynaklar da kaydedilir.
+        """
+        if self._db is None:
+            return
+        simdi = datetime.now(timezone.utc)
+        docs  = []
+
+        for attempt in result.get("source_attempts", []):
+            docs.append({
+                "ts":          simdi,
+                "saat":        simdi.strftime("%H:00"),
+                "kaynak":      attempt["kaynak"],
+                "erisim_ok":   attempt["erisim_ok"],
+                "toplam":      attempt.get("toplam", 0),
+                "tr":          attempt.get("tr", 0),
+                "yabanci":     attempt.get("yabanci", 0),
+                "cop":         attempt.get("cop", 0),
+                "yeni_eklenen": result.get("yeni_eklenen", 0),  # enjeksiyon sonrası güncellenir
+                "hata":        attempt.get("hata", None),
+            })
+
+        if docs:
+            try:
+                self._db["proxy_logs"].insert_many(docs)
+            except Exception as e:
+                log.warning(f"proxy_logs yazılamadı | {e}")
+
+    def _record_ban(self, proxy: str):
+        """
+        Madde 20: Proxy banlandığında proxy_performance koleksiyonuna yazar.
+        BAN_LIMIT aşılırsa retired=True işaretler.
+        """
+        if self._db is None:
+            return
+        simdi = datetime.now(timezone.utc)
+        try:
+            result = self._db["proxy_performance"].find_one_and_update(
+                {"proxy": proxy},
+                {
+                    "$inc":         {"ban_count": 1},
+                    "$set":         {"last_banned": simdi},
+                    "$setOnInsert": {"first_seen": simdi, "retired": False}
+                },
+                upsert=True,
+                return_document=pymongo.ReturnDocument.AFTER
+            )
+            # BAN_LIMIT aşıldıysa retire et
+            if result and result.get("ban_count", 0) >= BAN_LIMIT:
+                self._db["proxy_performance"].update_one(
+                    {"proxy": proxy},
+                    {"$set": {"retired": True}}
+                )
+                log.info(f"proxy emekliye ayrıldı | {proxy} | {BAN_LIMIT} ban")
+        except Exception as e:
+            log.warning(f"ban kaydı yazılamadı | {e}")
+
+    def _filter_retired(self, proxy_list: list) -> list:
+        """
+        Madde 20: proxy_performance'ta retired=True olan proxy'leri filtreler.
+        MongoDB erişilemezse listeyi olduğu gibi döner (güvenli fallback).
+        """
+        if self._db is None:
+            return proxy_list
+        try:
+            retired = set(
+                doc["proxy"]
+                for doc in self._db["proxy_performance"].find(
+                    {"retired": True}, {"proxy": 1, "_id": 0}
+                )
+            )
+            if retired:
+                onceki = len(proxy_list)
+                proxy_list = [p for p in proxy_list if p not in retired]
+                log.info(f"retired filtre | {onceki - len(proxy_list)} proxy elendi")
+        except Exception as e:
+            log.warning(f"retired filtre hatası | {e}")
+        return proxy_list
+    
+    def handle_response(self, response, request, spider):
+        """403/429 HTTP hatalarını yakalar, proxy'yi banlar."""
+        if response.status in [403, 429]:
+            proxy = request.meta.get('proxy')
+            if proxy:
+                self._record_ban(proxy)
+
+    def handle_failure(self, failure, spider):
+        """Timeout ve bağlantı hatalarını yakalar, proxy'yi banlar."""
+        proxy = failure.request.meta.get('proxy')
+        if proxy:
+            self._record_ban(proxy)
