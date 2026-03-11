@@ -119,7 +119,10 @@ class TrendyolBotPipeline:
         adapter["evaluation_len"] = self._sayi_temizle(adapter.get("evaluation_len", "-1"), float_mi=False, varsayilan=-1)
 
         # --- 3. VERITABANI ISLEMLERI ---
-        product_data = {"last_seen": datetime.now(timezone.utc)}
+        product_data = {
+            "last_seen": datetime.now(timezone.utc),
+            "scrape_method": "scrapy"  # imzayı atıyoruz
+        }
         for key in ["title", "category", "attributes", "images", "explanation"]:
             val = adapter.get(key)
             if val:

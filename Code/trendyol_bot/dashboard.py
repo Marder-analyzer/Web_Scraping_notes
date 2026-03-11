@@ -1,4 +1,6 @@
 import streamlit as st
+import subprocess
+import sys
 import pymongo
 import pandas as pd
 import plotly.express as px
@@ -53,6 +55,17 @@ if refresh_count and refresh_count > 0:
 # Hata logu
 if "error_log" not in st.session_state:
     st.session_state["error_log"] = []
+    
+if "active_bots" not in st.session_state:
+    st.session_state["active_bots"] = {}
+    
+if "bot_statuses" not in st.session_state:
+    st.session_state["bot_statuses"] = {
+        "ana_bot": "Uyku Modu 💤",
+        "pw_hata": "Uyku Modu 💤",
+        "scrapy_fiyat": "Uyku Modu 💤",
+        "pw_fiyat": "Uyku Modu 💤"
+    }
 
 # ─────────────────────────────────────────────
 # YARDIMCI FONKSİYONLAR
@@ -61,6 +74,33 @@ def log_error(msg):
     ts = datetime.now(TR_TZ).strftime("%H:%M:%S")
     st.session_state["error_log"].insert(0, f"[{ts}] {msg}")
     st.session_state["error_log"] = st.session_state["error_log"][:20]
+    
+if "active_bots" not in st.session_state:
+    st.session_state["active_bots"] = {}
+
+# Aktif botların durumunu kontrol et (Her yenilemede çalışır)
+bitenler = []
+for bot_id, bot_info in st.session_state["active_bots"].items():
+    proc = bot_info["proc"]
+    ret = proc.poll() # Süreç bitti mi diye kontrol et
+    
+    if ret is not None:  # Süreç kapanmış (başarılı veya çökmüş)
+        if ret != 0:     # 0 dışında bir kod, "HATA" demektir!
+            # Çöken botun terminaldeki kırmızı hata mesajını oku
+            hata_ciktisi = proc.stderr.read() if proc.stderr else "Bilinmeyen Hata"
+            # Çok uzun olmasın diye sadece son 200 karakterini al
+            kisa_hata = hata_ciktisi[-200:].strip() if hata_ciktisi else f"Çıkış Kodu: {ret}"
+            # Senin kendi fonksiyonunla Dashboard'a fırlat!
+            log_error(f"{bot_info['name']} Çöktü! Hata: {kisa_hata}")
+            
+        # Biten botu listeden çıkar
+        bitenler.append(bot_id)
+
+for b in bitenler:
+    del st.session_state["active_bots"][b]
+# ------------------------------------------
+    
+
 
 def load_saved_mails():
     if os.path.exists(SAVED_MAILS_FILE):
@@ -236,6 +276,50 @@ with st.sidebar:
 
     st.markdown("---")
 
+    st.subheader("🚀 Bot Kontrol Paneli")
+
+    def is_bot_active(bot_id):
+        return (bot_id in st.session_state.get("active_bots", {})) or \
+               (st.session_state.get("bot_statuses", {}).get(bot_id) == "🟢 Çalışıyor")
+
+    ana_calisiyor = is_bot_active("ana_bot")
+    pw_hata_calisiyor = is_bot_active("pw_hata")
+    scrapy_fiyat_calisiyor = is_bot_active("scrapy_fiyat")
+    pw_fiyat_calisiyor = is_bot_active("pw_fiyat")
+
+    # 1. Ana Bot
+    if st.button("🕷️ 1. Ana Botu Başlat", use_container_width=True, disabled=ana_calisiyor):
+        p = subprocess.Popen([sys.executable, "-m", "scrapy", "crawl", "trendyol"], stderr=subprocess.PIPE, text=True)
+        st.session_state["active_bots"]["ana_bot"] = {"proc": p, "name": "Ana Bot"}
+        st.session_state["bot_statuses"]["ana_bot"] = "🟢 Çalışıyor"
+        st.rerun() 
+
+    # 2. İtfaiye Botu
+    if st.button("🚑 2. Hataları Kurtar (PW)", use_container_width=True, disabled=pw_hata_calisiyor):
+        p = subprocess.Popen([sys.executable, "playwright_worker.py", "--gorev", "hata_coz"], stderr=subprocess.PIPE, text=True)
+        st.session_state["active_bots"]["pw_hata"] = {"proc": p, "name": "İtfaiye"}
+        st.session_state["bot_statuses"]["pw_hata"] = "🟢 Çalışıyor"
+        st.rerun()
+
+    st.markdown("**🔄 Fiyat Güncelleme**")
+    c1, c2 = st.columns(2)
+
+    with c1:
+        if st.button("⚡ Hızlı", disabled=scrapy_fiyat_calisiyor):
+            p = subprocess.Popen([sys.executable, "-m", "scrapy", "crawl", "fiyat_guncelle"], stderr=subprocess.PIPE, text=True)
+            st.session_state["active_bots"]["scrapy_fiyat"] = {"proc": p, "name": "Hızlı Fiyat"}
+            st.session_state["bot_statuses"]["scrapy_fiyat"] = "🟢 Çalışıyor"
+            st.rerun()
+
+    with c2:
+        if st.button("🐢 Güvenilir", disabled=pw_fiyat_calisiyor):
+            p = subprocess.Popen([sys.executable, "playwright_worker.py", "--gorev", "fiyat_guncelle"], stderr=subprocess.PIPE, text=True)
+            st.session_state["active_bots"]["pw_fiyat"] = {"proc": p, "name": "Playwright Fiyat"}
+            st.session_state["bot_statuses"]["pw_fiyat"] = "🟢 Çalışıyor"
+            st.rerun()
+            
+    st.markdown("---")
+    
     # Hata logu kutucuğu
     hata_sayisi = len(st.session_state["error_log"])
     if hata_sayisi > 0:
@@ -354,6 +438,13 @@ if not db_online:
             st.session_state["mongo_alert_sent"] = True
     st.warning("MongoDB şu anda kapalı veya yanıt vermiyor.")
     st.info("🛠️ Docker Desktop'ı açın, MongoDB container'ını başlatın (▶️), ardından 'Anında Yenile'ye tıklayın.")
+    if st.button("▶️ MongoDB Docker Container'ı Başlat", type="primary"):
+        try:
+            # Not: "mongodb" kısmını kendi Docker container isminle değiştir! (örneğin "mongo-server")
+            subprocess.run(["docker", "start", "neuranovav_mongo"], check=True)
+            st.success("✅ Veritabanı başlatma sinyali gönderildi! 5 saniye sonra 'Anında Yenile'ye basın.")
+        except Exception as e:
+            st.error(f"❌ Başlatılamadı! Docker Desktop kapalı olabilir. Hata: {e}")
     st.stop()
 
 db = client["neuranovav_db"]
@@ -393,6 +484,34 @@ if latest_job:
         clear_zombie_flag()
 
     st.subheader(f"Durum: {status_text}")
+    st.markdown("##### 🤖 Alt Sistem Görev Durumları")
+    col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+    
+    bot_ui_list = [
+        ("ana_bot", "🕷️ Ana Bot", col_b1),
+        ("pw_hata", "🚑 İtfaiye", col_b2),
+        ("scrapy_fiyat", "⚡ Hızlı Fiyat", col_b3),
+        ("pw_fiyat", "🐢 Güvenilir (PW)", col_b4)
+    ]
+    
+    for b_id, b_name, col in bot_ui_list:
+        b_stat = st.session_state["bot_statuses"].get(b_id, "Uyku Modu 💤")
+        with col:
+            st.markdown(f"**{b_name}**")
+            st.caption(b_stat)
+            # Eğer bu bot şu an çalışıyorsa, hemen altına Kırmızı Durdur butonu koy
+            if b_id in st.session_state.get("active_bots", {}):
+                if st.button("🛑 Durdur", key=f"stop_{b_id}", type="primary", use_container_width=True):
+                    try:
+                        # İşletim sistemine SIGTERM (CTRL+C) sinyali gönder
+                        st.session_state["active_bots"][b_id]["proc"].terminate()
+                        st.session_state["bot_statuses"][b_id] = "🛑 Durduruluyor..."
+                        st.toast(f"{b_name} sistemine durdurma sinyali gönderildi!")
+                    except Exception as e:
+                        log_error(f"{b_name} durdurulurken hata: {e}")
+                    st.rerun()
+    st.write("")
+    
 
     # ── ÇALIŞMA SÜRESİ VE HIZ ──
     start_time = latest_job.get("start_time")

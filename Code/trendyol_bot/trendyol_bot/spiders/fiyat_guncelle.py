@@ -36,7 +36,7 @@ class FiyatGuncelleSpider(scrapy.Spider):
         try:
             db = client["neuranovav_db"]
             # Sadece URL'leri çekiyoruz
-            cursor = db.products.find({}, {"url": 1})
+            cursor = db.products.find({"scrape_method": "scrapy"}, {"url": 1})
             urls = [doc["url"] for doc in cursor if "url" in doc]
         finally:
             # Spider aniden çökse bile bağlantı kesinlikle kapanacak
@@ -54,6 +54,16 @@ class FiyatGuncelleSpider(scrapy.Spider):
             )
 
     def parse_price(self, response):
+        sayfa_basligi = response.css("title::text").get(default="").lower()
+        if "doğrulama" in sayfa_basligi or "robot" in sayfa_basligi or "captcha" in response.url:
+            self.logger.error(f"[Spider] CAPTCHA YAKALANDI! Fiyat Güncelleme Pas Geçiliyor: {response.url}")
+            raise scrapy.exceptions.IgnoreRequest("Captcha yakalandi")
+            
+        if "bulunamadı" in sayfa_basligi or "tükendi" in sayfa_basligi:
+            self.logger.warning(f"[Spider] Ürün yayından kalkmış veya tükenmiş: {response.url}")
+            raise scrapy.exceptions.IgnoreRequest("Urun tukendi")
+        # -----------------------------------------------------------
+
         loader = ItemLoader(item=TrendyolBotItem(), response=response)
         loader.add_value("url", response.url)
         

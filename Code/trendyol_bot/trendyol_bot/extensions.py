@@ -406,13 +406,15 @@ class LiveProxyUpdater:
         return proxy_list
     
     def handle_response(self, response, request, spider):
-        """FAZ 5+6: 403/429 HTTP hatalarını yakalar, proxy banlar + URL hata kaydı."""
         if response.status in [403, 429]:
             proxy = request.meta.get("proxy")
             if proxy:
                 self._record_ban(proxy)
-            error_type = f"HTTP_{response.status}"
-            self._record_url_error(response.url, proxy or "Direct", error_type)
+                
+            # SADECE ÜRÜN SAYFASIYSA İTFAİYEYE HABER VER
+            if "/pd/" in response.url or "-p-" in response.url:
+                error_type = f"HTTP_{response.status}"
+                self._record_url_error(response.url, proxy or "Direct", error_type)
 
     def handle_failure(self, failure, spider):
         """FAZ 5+6: Timeout/bağlantı hatalarını yakalar, proxy banlar + URL hata kaydı."""
@@ -420,8 +422,11 @@ class LiveProxyUpdater:
         proxy   = request.meta.get("proxy")
         if proxy:
             self._record_ban(proxy)
-        error_type = failure.type.__name__ if failure.type else "UnknownError"
-        self._record_url_error(request.url, proxy or "Direct", error_type)
+            
+        # SADECE ÜRÜN SAYFASIYSA İTFAİYEYE HABER VER
+        if "/pd/" in request.url or "-p-" in request.url:
+            error_type = failure.type.__name__ if failure.type else "UnknownError"
+            self._record_url_error(request.url, proxy or "Direct", error_type)
         
     def _record_url_error(self, url: str, proxy: str, error_type: str):
         if self._db is None:
