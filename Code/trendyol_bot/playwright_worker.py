@@ -15,6 +15,27 @@ failed_col = db["failed_urls"]
 products_col = db["products"]
 prices_col = db["price_history"]
 
+def update_pw_stats(gorev_adi, denenen, basarili):
+    
+    # En son çalışan job'ı bul
+    latest_job = db.jobs.find_one(sort=[("start_time", pymongo.DESCENDING)])
+    
+    if latest_job:
+        job_id = latest_job["_id"]
+        # Hangi görevi çalıştırıyorsa onun sayaçlarını artır
+        db.jobs.update_one(
+            {"_id": job_id},
+            {
+                "$inc": {
+                    f"pw_{gorev_adi}_denenen": denenen,
+                    f"pw_{gorev_adi}_basarili": basarili
+                },
+                "$set": {
+                    "pw_last_ping": datetime.now(timezone.utc)
+                }
+            }
+        )
+
 def get_product_data_with_playwright(page, url):
     """Playwright ile ekrandan tüm verileri (Fiyat, Resimler, Özellikler vb.) eksiksiz söker."""
     try:
@@ -100,6 +121,9 @@ def mod1_kuyruk_temizle(page):
         simdi = datetime.now(timezone.utc)
         today_str = simdi.strftime("%Y-%m-%d")
         
+        basarili_sayisi = 0 
+        deneme_sayisi = len(bekleyenler) 
+        
         for item in bekleyenler:
             url = item["url"]
             data, status = get_product_data_with_playwright(page, url)
@@ -108,11 +132,12 @@ def mod1_kuyruk_temizle(page):
                 products_col.update_one({"url": url}, {"$set": {"title": data["title"], "category": data["category"], "images": data["images"], "explanation": data["explanation"], "attributes": data["attributes"], "last_seen": simdi, "scrape_method": "playwright"}}, upsert=True)
                 prices_col.update_one({"url": url, "date": today_str}, {"$set": {"price": data["price"], "evaluation": data["evaluation"], "evaluation_len": data["evaluation_len"]}}, upsert=True)
                 failed_col.update_one({"_id": item["_id"]}, {"$set": {"cozuldu": True, "cozulme_tarihi": simdi}})
+                basarili_sayisi += 1
                 print(f"  🟢 KURTARILDI: {data['title'][:30]}... | Fiyat: {data['price']} TL")
             else:
                 failed_col.update_one({"_id": item["_id"]}, {"$inc": {"playwright_deneme": 1}, "$set": {"son_hata_sebebi": status}})
                 print(f"  🔴 BAŞARISIZ: {status} -> {url.split('?')[0][-30:]}")
-
+        update_pw_stats("hata_coz", deneme_sayisi, basarili_sayisi)
 def mod2_fiyat_guncelle(page):
     """SADECE veritabanındaki kayıtlı ürünlerin bugünkü fiyatlarını günceller."""
     while True:
@@ -131,6 +156,9 @@ def mod2_fiyat_guncelle(page):
             
         print(f"\n[MOD 2] 🔄 {len(guncellenecekler)} kayıtlı ürünün fiyatı güncelleniyor...")
         
+        basarili_sayisi = 0 
+        deneme_sayisi = len(guncellenecekler) 
+        
         for item in guncellenecekler:
             url = item["url"]
             data, status = get_product_data_with_playwright(page, url)
@@ -138,10 +166,11 @@ def mod2_fiyat_guncelle(page):
             if data and data.get("price"):
                 products_col.update_one({"url": url}, {"$set": {"last_seen": simdi, "images": data["images"], "explanation": data["explanation"], "attributes": data["attributes"]}})
                 prices_col.update_one({"url": url, "date": today_str}, {"$set": {"price": data["price"], "evaluation": data["evaluation"], "evaluation_len": data["evaluation_len"]}}, upsert=True)
+                basarili_sayisi += 1
                 print(f"  🔵 GÜNCELLENDİ: Fiyat -> {data['price']} TL | {data['title'][:30]}...")
             else:
                 print(f"  🟠 PAS GEÇİLDİ: {status} -> {url.split('?')[0][-30:]}")
-
+        update_pw_stats("fiyat_guncelle", deneme_sayisi, basarili_sayisi)
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NeuraNovaV Playwright İşçisi")
     parser.add_argument("--gorev", choices=['hata_coz', 'fiyat_guncelle'], required=True, 

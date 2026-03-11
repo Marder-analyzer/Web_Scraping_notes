@@ -512,6 +512,42 @@ if latest_job:
                     st.rerun()
     st.write("")
     
+    if latest_job:
+        st.markdown("---")
+        st.subheader("🚒 Playwright İşçi Performansı")
+        pwc1, pwc2, pwc3 = st.columns(3)
+
+        # 1. Kurtarma Operasyonu (İtfaiye)
+        denenen_hata = latest_job.get("pw_hata_coz_denenen", 0)
+        basarili_hata = latest_job.get("pw_hata_coz_basarili", 0)
+        pwc1.metric(
+            "🚒 İtfaiye: Kurtarılan Ürün", 
+            f"{basarili_hata}", 
+            delta=f"{denenen_hata} deneme",
+            help="Playwright'ın hata kuyruğundan alıp başarıyla veritabanına döndürdüğü ürünler."
+        )
+
+        # 2. Güvenilir Fiyat Güncelleme
+        denenen_fiyat = latest_job.get("pw_fiyat_guncelle_denenen", 0)
+        basarili_fiyat = latest_job.get("pw_fiyat_guncelle_basarili", 0)
+        pwc2.metric(
+            "🐢 PW: Fiyat Güncelleme", 
+            f"{basarili_fiyat}", 
+            delta=f"{denenen_fiyat} deneme",
+            help="Zorlu ürünlerin Playwright ile güncellenme başarısı."
+        )
+    st.write("")
+
+    # 3. PW Canlılık (Heartbeat)
+    pw_ping = latest_job.get("pw_last_ping")
+    if pw_ping:
+        pw_sn = int((datetime.now(timezone.utc) - pw_ping.replace(tzinfo=timezone.utc)).total_seconds())
+        pw_status = "🔵 AKTİF" if pw_sn < 60 else "⚪ UYKUDA"
+        pwc3.metric("📡 PW Son Sinyal", pw_status, help="Playwright işçisinin son veri gönderdiği an.")
+        pwc3.caption(f"{pw_sn} saniye önce")
+    else:
+        pwc3.metric("📡 PW Son Sinyal", "Bağlantı Yok")
+    
 
     # ── ÇALIŞMA SÜRESİ VE HIZ ──
     start_time = latest_job.get("start_time")
