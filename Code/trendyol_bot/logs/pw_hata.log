@@ -1,0 +1,12 @@
+
+--- YENİ OTURUM: 2026-03-11 23:37:49 ---
+usage: playwright_worker.py [-h] --gorev {hata_coz,fiyat_guncelle}
+playwright_worker.py: error: unrecognized arguments: --job_id 20260311_203722
+
+--- YENİ OTURUM: 2026-03-11 23:37:55 ---
+usage: playwright_worker.py [-h] --gorev {hata_coz,fiyat_guncelle}
+playwright_worker.py: error: unrecognized arguments: --job_id 20260311_203722
+
+--- YENİ OTURUM: 2026-03-11 23:38:01 ---
+usage: playwright_worker.py [-h] --gorev {hata_coz,fiyat_guncelle}
+playwright_worker.py: error: unrecognized arguments: --job_id 20260311_203722

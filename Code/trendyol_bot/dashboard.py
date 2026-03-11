@@ -276,47 +276,59 @@ with st.sidebar:
 
     st.markdown("---")
 
-    st.subheader("🚀 Bot Kontrol Paneli")
+    
 
-    def is_bot_active(bot_id):
-        return (bot_id in st.session_state.get("active_bots", {})) or \
-               (st.session_state.get("bot_statuses", {}).get(bot_id) == "🟢 Çalışıyor")
+    if db_online:
+        cmd_col = client["neuranovav_db"]["bot_commands"]
 
-    ana_calisiyor = is_bot_active("ana_bot")
-    pw_hata_calisiyor = is_bot_active("pw_hata")
-    scrapy_fiyat_calisiyor = is_bot_active("scrapy_fiyat")
-    pw_fiyat_calisiyor = is_bot_active("pw_fiyat")
+        def is_bot_running_db(bot_id):
+            """MongoDB'ye sorar: Komutan bu botu sahaya sürdü mü?"""
+            doc = cmd_col.find_one({"bot_id": bot_id})
+            # Eğer is_running True ise VEYA başlat emri verilmiş ama henüz işlenmemişse (pending) aktif göster
+            if doc and (doc.get("is_running", False) or (doc.get("status") == "pending" and doc.get("action") == "start")):
+                return True
+            return False
 
-    # 1. Ana Bot
-    if st.button("🕷️ 1. Ana Botu Başlat", use_container_width=True, disabled=ana_calisiyor):
-        p = subprocess.Popen([sys.executable, "-m", "scrapy", "crawl", "trendyol"], stderr=subprocess.PIPE, text=True)
-        st.session_state["active_bots"]["ana_bot"] = {"proc": p, "name": "Ana Bot"}
-        st.session_state["bot_statuses"]["ana_bot"] = "🟢 Çalışıyor"
-        st.rerun() 
+        def send_command(bot_id, action):
+            """Dashboard'dan Komutana veritabanı üzerinden emir gönderir."""
+            cmd_col.update_one(
+                {"bot_id": bot_id},
+                {"$set": {
+                    "action": action, 
+                    "status": "pending", 
+                    "updated_at": datetime.now(timezone.utc)
+                }},
+                upsert=True
+            )
+            if action == "start":
+                st.toast(f"🚀 {bot_id} için BAŞLATMA emri karargaha iletildi!")
+            else:
+                st.toast(f"🛑 {bot_id} için DURDURMA emri karargaha iletildi!")
 
-    # 2. İtfaiye Botu
-    if st.button("🚑 2. Hataları Kurtar (PW)", use_container_width=True, disabled=pw_hata_calisiyor):
-        p = subprocess.Popen([sys.executable, "playwright_worker.py", "--gorev", "hata_coz"], stderr=subprocess.PIPE, text=True)
-        st.session_state["active_bots"]["pw_hata"] = {"proc": p, "name": "İtfaiye"}
-        st.session_state["bot_statuses"]["pw_hata"] = "🟢 Çalışıyor"
-        st.rerun()
+        # --- BOT BUTONLARI ---
+        st.subheader("🚀 Bot Kontrol Paneli")
 
-    st.markdown("**🔄 Fiyat Güncelleme**")
-    c1, c2 = st.columns(2)
+        bot_configs = [
+            ("ana_bot", "🕷️ 1. Ana Botu Başlat", "ana_bot.log"),
+            ("pw_hata", "🚑 2. Hataları Kurtar (PW)", "pw_hata.log"),
+            ("scrapy_fiyat", "⚡ Hızlı Fiyat", "hizli_fiyat.log"),
+            ("pw_fiyat", "🐢 Güvenilir (PW)", "pw_fiyat.log")
+        ]
 
-    with c1:
-        if st.button("⚡ Hızlı", disabled=scrapy_fiyat_calisiyor):
-            p = subprocess.Popen([sys.executable, "-m", "scrapy", "crawl", "fiyat_guncelle"], stderr=subprocess.PIPE, text=True)
-            st.session_state["active_bots"]["scrapy_fiyat"] = {"proc": p, "name": "Hızlı Fiyat"}
-            st.session_state["bot_statuses"]["scrapy_fiyat"] = "🟢 Çalışıyor"
-            st.rerun()
-
-    with c2:
-        if st.button("🐢 Güvenilir", disabled=pw_fiyat_calisiyor):
-            p = subprocess.Popen([sys.executable, "playwright_worker.py", "--gorev", "fiyat_guncelle"], stderr=subprocess.PIPE, text=True)
-            st.session_state["active_bots"]["pw_fiyat"] = {"proc": p, "name": "Playwright Fiyat"}
-            st.session_state["bot_statuses"]["pw_fiyat"] = "🟢 Çalışıyor"
-            st.rerun()
+        for bot_id, btn_text, log_file in bot_configs:
+            calisiyor_mu = is_bot_running_db(bot_id)
+            
+            if calisiyor_mu:
+                # Çalışıyorsa kırmızı DURDUR butonu göster
+                st.markdown(f"<div style='color:#00ED64; font-weight:bold; margin-bottom:5px;'>🟢 {bot_id.upper()} SAHADA</div>", unsafe_allow_html=True)
+                if st.button(f"🛑 DURDUR", key=f"stop_{bot_id}", type="primary", use_container_width=True):
+                    send_command(bot_id, "stop")
+                    st.rerun()
+            else:
+                # Çalışmıyorsa normal BAŞLAT butonu göster
+                if st.button(btn_text, key=f"start_{bot_id}", use_container_width=True):
+                    send_command(bot_id, "start")
+                    st.rerun()
             
     st.markdown("---")
     
@@ -436,11 +448,12 @@ if not db_online:
             </div></body></html>"""
             send_mail(saved[0], "🚨 NeuraNovaV: MongoDB Bağlantısı Koptu!", html_alert)
             st.session_state["mongo_alert_sent"] = True
+            
     st.warning("MongoDB şu anda kapalı veya yanıt vermiyor.")
     st.info("🛠️ Docker Desktop'ı açın, MongoDB container'ını başlatın (▶️), ardından 'Anında Yenile'ye tıklayın.")
     if st.button("▶️ MongoDB Docker Container'ı Başlat", type="primary"):
+        import subprocess
         try:
-            # Not: "mongodb" kısmını kendi Docker container isminle değiştir! (örneğin "mongo-server")
             subprocess.run(["docker", "start", "neuranovav_mongo"], check=True)
             st.success("✅ Veritabanı başlatma sinyali gönderildi! 5 saniye sonra 'Anında Yenile'ye basın.")
         except Exception as e:
@@ -495,21 +508,15 @@ if latest_job:
     ]
     
     for b_id, b_name, col in bot_ui_list:
-        b_stat = st.session_state["bot_statuses"].get(b_id, "Uyku Modu 💤")
+        # Durumu st.session_state yerine doğrudan veritabanından (Komutandan) soruyoruz
+        if is_bot_running_db(b_id):
+            b_stat = "🟢 Çalışıyor"
+        else:
+            b_stat = "Uyku Modu 💤"
+            
         with col:
             st.markdown(f"**{b_name}**")
             st.caption(b_stat)
-            # Eğer bu bot şu an çalışıyorsa, hemen altına Kırmızı Durdur butonu koy
-            if b_id in st.session_state.get("active_bots", {}):
-                if st.button("🛑 Durdur", key=f"stop_{b_id}", type="primary", use_container_width=True):
-                    try:
-                        # İşletim sistemine SIGTERM (CTRL+C) sinyali gönder
-                        st.session_state["active_bots"][b_id]["proc"].terminate()
-                        st.session_state["bot_statuses"][b_id] = "🛑 Durduruluyor..."
-                        st.toast(f"{b_name} sistemine durdurma sinyali gönderildi!")
-                    except Exception as e:
-                        log_error(f"{b_name} durdurulurken hata: {e}")
-                    st.rerun()
     st.write("")
     
     if latest_job:

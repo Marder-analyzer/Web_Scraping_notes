@@ -175,9 +175,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NeuraNovaV Playwright İşçisi")
     parser.add_argument("--gorev", choices=['hata_coz', 'fiyat_guncelle'], required=True, 
                         help="Hangi işlemin yapılacağını seçin (hata_coz veya fiyat_guncelle)")
+    
+    # EKLENEN YENİ KISIM: Playwright artık job_id'yi tanıyacak
+    parser.add_argument("--job_id", default=None,
+                        help="İlişkilendirilecek Scrapy job_id (opsiyonel)")
+    
     args = parser.parse_args()
 
     print(f"🚀 NeuraNovaV Playwright İşçisi Başlatıldı! | Görev: {args.gorev.upper()}")
+    if args.job_id:
+        print(f"   Job ID: {args.job_id}")
+    else:
+        print(f"   ⚠️  job_id verilmedi — istatistikler jobs koleksiyonuna yazılmayacak")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True) 
@@ -186,9 +195,9 @@ if __name__ == "__main__":
         
         try:
             if args.gorev == 'hata_coz':
-                mod1_kuyruk_temizle(page)
+                mod1_kuyruk_temizle(page, args.job_id)
             elif args.gorev == 'fiyat_guncelle':
-                mod2_fiyat_guncelle(page)
+                mod2_fiyat_guncelle(page, args.job_id)
                 
         except KeyboardInterrupt:
             print("\n🛑 Kullanıcı tarafından durduruldu.")

@@ -1,0 +1,85 @@
+
+--- YENÄ° OTURUM: 2026-03-11 23:38:21 ---
+2026-03-11 23:38:22 [scrapy.utils.log] INFO: Scrapy 2.14.1 started (bot: trendyol_bot)
+2026-03-11 23:38:22 [scrapy.utils.log] INFO: Versions:
+{'lxml': '6.0.2',
+ 'libxml2': '2.11.9',
+ 'cssselect': '1.4.0',
+ 'parsel': '1.11.0',
+ 'w3lib': '2.4.0',
+ 'Twisted': '25.5.0',
+ 'Python': '3.14.2 (tags/v3.14.2:df79316, Dec  5 2025, 17:18:21) [MSC v.1944 '
+           '64 bit (AMD64)]',
+ 'pyOpenSSL': '25.3.0 (OpenSSL 3.5.5 27 Jan 2026)',
+ 'cryptography': '46.0.5',
+ 'Platform': 'Windows-11-10.0.26200-SP0'}
+2026-03-11 23:38:22 [scrapy.addons] INFO: Enabled addons:
+[]
+2026-03-11 23:38:22 [scrapy.extensions.telnet] INFO: Telnet Password: e0a35526dd0fc86c
+2026-03-11 23:38:22 [scrapy.middleware] INFO: Enabled extensions:
+['scrapy.extensions.corestats.CoreStats',
+ 'scrapy.extensions.logcount.LogCount',
+ 'scrapy.extensions.telnet.TelnetConsole',
+ 'scrapy.extensions.logstats.LogStats',
+ 'scrapy.extensions.throttle.AutoThrottle',
+ 'trendyol_bot.extensions.LiveProxyUpdater']
+2026-03-11 23:38:22 [scrapy.crawler] INFO: Overridden settings:
+{'AUTOTHROTTLE_ENABLED': True,
+ 'AUTOTHROTTLE_MAX_DELAY': 10,
+ 'AUTOTHROTTLE_START_DELAY': 1,
+ 'AUTOTHROTTLE_TARGET_CONCURRENCY': 1.5,
+ 'BOT_NAME': 'trendyol_bot',
+ 'COOKIES_ENABLED': False,
+ 'DOWNLOAD_DELAY': 1,
+ 'DOWNLOAD_FAIL_ON_DATALOSS': False,
+ 'DOWNLOAD_TIMEOUT': 15,
+ 'FEED_EXPORT_ENCODING': 'utf-8',
+ 'FEED_EXPORT_FIELDS': ['url',
+                        'category',
+                        'title',
+                        'price',
+                        'evaluation',
+                        'evaluation_len',
+                        'attributes',
+                        'explanation',
+                        'images'],
+ 'LOG_FORMATTER': 'trendyol_bot.logformatter.QuietLogFormatter',
+ 'LOG_LEVEL': 'INFO',
+ 'NEWSPIDER_MODULE': 'trendyol_bot.spiders',
+ 'RETRY_HTTP_CODES': [500, 502, 503, 504, 522, 524, 408, 429, 403],
+ 'RETRY_TIMES': 5,
+ 'SPIDER_MODULES': ['trendyol_bot.spiders']}
+2026-03-11 23:38:22 [scrapy.middleware] INFO: Enabled downloader middlewares:
+['scrapy.downloadermiddlewares.offsite.OffsiteMiddleware',
+ 'scrapy.downloadermiddlewares.httpauth.HttpAuthMiddleware',
+ 'scrapy.downloadermiddlewares.downloadtimeout.DownloadTimeoutMiddleware',
+ 'scrapy.downloadermiddlewares.defaultheaders.DefaultHeadersMiddleware',
+ 'trendyol_bot.middlewares.RandomUserAgentMiddleware',
+ 'scrapy.downloadermiddlewares.retry.RetryMiddleware',
+ 'scrapy.downloadermiddlewares.redirect.MetaRefreshMiddleware',
+ 'scrapy.downloadermiddlewares.httpcompression.HttpCompressionMiddleware',
+ 'scrapy.downloadermiddlewares.redirect.RedirectMiddleware',
+ 'rotating_proxies.middlewares.RotatingProxyMiddleware',
+ 'rotating_proxies.middlewares.BanDetectionMiddleware',
+ 'scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware',
+ 'scrapy.downloadermiddlewares.stats.DownloaderStats']
+2026-03-11 23:38:22 [scrapy.middleware] INFO: Enabled spider middlewares:
+['scrapy.spidermiddlewares.start.StartSpiderMiddleware',
+ 'scrapy.spidermiddlewares.httperror.HttpErrorMiddleware',
+ 'scrapy.spidermiddlewares.referer.RefererMiddleware',
+ 'scrapy.spidermiddlewares.urllength.UrlLengthMiddleware',
+ 'scrapy.spidermiddlewares.depth.DepthMiddleware']
+2026-03-11 23:38:22 [scrapy.middleware] INFO: Enabled item pipelines:
+['trendyol_bot.pipelines.TrendyolBotPipeline']
+2026-03-11 23:38:22 [scrapy.core.engine] INFO: Spider opened
+2026-03-11 23:38:22 [fiyat_guncelle] INFO: [Pipeline] Yeni oturum | job_id=20260311_203822
+2026-03-11 23:38:25 [pipeline] INFO: [Pipeline] Durum maili gönderildi | \U0001f7e2 NeuraNovaV Bot Baþladý
+2026-03-11 23:38:25 [scrapy.extensions.logstats] INFO: Crawled 0 pages (at 0 pages/min), scraped 0 items (at 0 items/min)
+2026-03-11 23:38:25 [proxy_updater] INFO: proxy güncelleyici aktif | 4 kaynak | her 15 dk
+2026-03-11 23:38:25 [scrapy.extensions.telnet] INFO: Telnet console listening on 127.0.0.1:6024
+2026-03-11 23:38:25 [rotating_proxies.middlewares] INFO: Proxies(good: 0, dead: 0, unchecked: 117, reanimated: 0, mean backoff time: 0s)
+2026-03-11 23:38:25 [fiyat_guncelle] INFO: \U0001f680 FÝYAT GÜNCELLEME BAÞLIYOR: MongoDB'den 327 adet kayýtlý ürün çekildi.
+2026-03-11 23:38:25 [proxy_updater] INFO: kaynak OK | monosans | toplam: 55 | TR: 0 | yabancý: 55 | çöp: 0
+2026-03-11 23:38:25 [proxy_updater] INFO: güncelleme tamam | +0 yeni | -0 banlý silindi | TR: 0 | çöp: 0
+2026-03-11 23:38:27 [scrapy.core.scraper] WARNING: DROP: DROP (Fiyat Hatasi): https://www.trendyol.com/pd/maksen-tekstil/cicek-desenli-viskon-kumas-kadin-salvar-p-1056469370?boutiqueId=61&merchantId=1142106 | URL: https://www.trendyol.com/pd/maksen-tekstil/cicek-desenli-viskon-kumas-kadin-salvar-p-1056469370?boutiqueId=61&merchantId=1142106
+2026-03-11 23:38:29 [scrapy.core.scraper] WARNING: DROP: DROP (Fiyat Yok): https://www.trendyol.com/pd/yelzey-butik/kayik-yaka-drape-detay-body-p-1107969812?boutiqueId=61&merchantId=1053907 | URL: https://www.trendyol.com/pd/yelzey-butik/kayik-yaka-drape-detay-body-p-1107969812?boutiqueId=61&merchantId=1053907
