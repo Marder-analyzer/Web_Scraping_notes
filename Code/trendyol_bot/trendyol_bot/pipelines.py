@@ -47,6 +47,13 @@ class TrendyolBotPipeline:
             unique=True, background=True
         )
 
+        # FIX-1: jobs koleksiyonu için job_id unique index
+        self.jobs_col.create_index("job_id", unique=True, background=True)
+        # FIX-2: proxy_logs şişmesini önlemek için ts index
+        self.db["proxy_logs"].create_index("ts", background=True)
+        # FIX-3: bot_commands koleksiyonu için bot_id index
+        self.db["bot_commands"].create_index("bot_id", unique=True, background=True)
+        
         self.start_time     = datetime.now(timezone.utc)
         self.islenen_toplam = 0
         self.mevcut_saat    = self.start_time.hour
