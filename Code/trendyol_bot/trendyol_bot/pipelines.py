@@ -407,9 +407,12 @@ class TrendyolBotPipeline:
                     "$addToSet": {"proxy_listesi": proxy},
                     "$push": {
                         "attempts": {
-                            "ts":         simdi,
-                            "proxy":      proxy,
-                            "error_type": error_type,
+                            "$each": [{
+                                "ts":         simdi,
+                                "proxy":      proxy,
+                                "error_type": error_type,
+                            }],
+                            "$slice": -20  # FIX: Sadece son 20 denemeyi tut, array şişmez
                         }
                     },
                     "$setOnInsert": {"ilk_hata": simdi}

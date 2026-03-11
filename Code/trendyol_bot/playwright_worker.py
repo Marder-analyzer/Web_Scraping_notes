@@ -15,16 +15,13 @@ failed_col = db["failed_urls"]
 products_col = db["products"]
 prices_col = db["price_history"]
 
-def update_pw_stats(gorev_adi, denenen, basarili):
+def update_pw_stats(job_id,gorev_adi, denenen, basarili):
     
-    # En son çalışan job'ı bul
-    latest_job = db.jobs.find_one(sort=[("start_time", pymongo.DESCENDING)])
-    
-    if latest_job:
-        job_id = latest_job["_id"]
-        # Hangi görevi çalıştırıyorsa onun sayaçlarını artır
+    if not job_id:
+        return  # job_id verilmemişse yazmaya çalışma
+    try:
         db.jobs.update_one(
-            {"_id": job_id},
+            {"job_id": job_id},
             {
                 "$inc": {
                     f"pw_{gorev_adi}_denenen": denenen,
@@ -35,6 +32,8 @@ def update_pw_stats(gorev_adi, denenen, basarili):
                 }
             }
         )
+    except Exception as e:
+        print(f"  ⚠️ Stats yazılamadı: {e}")
 
 def get_product_data_with_playwright(page, url):
     """Playwright ile ekrandan tüm verileri (Fiyat, Resimler, Özellikler vb.) eksiksiz söker."""
@@ -105,7 +104,7 @@ def get_product_data_with_playwright(page, url):
     except Exception as e:
         return None, f"Hata: {str(e)[:50]}"
 
-def mod1_kuyruk_temizle(page):
+def mod1_kuyruk_temizle(page,job_id):
     """SADECE fiyatı eksik olan hatalı URL'leri kurtarır."""
     while True:
         bekleyenler = list(failed_col.find({
@@ -135,7 +134,19 @@ def mod1_kuyruk_temizle(page):
                 basarili_sayisi += 1
                 print(f"  🟢 KURTARILDI: {data['title'][:30]}... | Fiyat: {data['price']} TL")
             else:
-                failed_col.update_one({"_id": item["_id"]}, {"$inc": {"playwright_deneme": 1}, "$set": {"son_hata_sebebi": status}})
+                failed_col.update_one(
+                    {"_id": item["_id"]},
+                    {
+                        "$inc": {"playwright_deneme": 1},
+                        "$set": {"son_hata_sebebi": status},
+                        "$push": {
+                            "attempts": {
+                                "$each": [{"ts": simdi, "status": status, "worker": "playwright"}],
+                                "$slice": -20  # FIX: array şişmez
+                            }
+                        }
+                    }
+                )
                 print(f"  🔴 BAŞARISIZ: {status} -> {url.split('?')[0][-30:]}")
         update_pw_stats("hata_coz", deneme_sayisi, basarili_sayisi)
 def mod2_fiyat_guncelle(page):
@@ -164,7 +175,7 @@ def mod2_fiyat_guncelle(page):
             data, status = get_product_data_with_playwright(page, url)
             
             if data and data.get("price"):
-                products_col.update_one({"url": url}, {"$set": {"last_seen": simdi, "images": data["images"], "explanation": data["explanation"], "attributes": data["attributes"]}})
+                products_col.update_one({"url": url}, {"$set": {"last_seen": simdi, "images": data["images"], "explanation": data["explanation"], "attributes": data["attributes"], "scrape_method": "playwright"}})
                 prices_col.update_one({"url": url, "date": today_str}, {"$set": {"price": data["price"], "evaluation": data["evaluation"], "evaluation_len": data["evaluation_len"]}}, upsert=True)
                 basarili_sayisi += 1
                 print(f"  🔵 GÜNCELLENDİ: Fiyat -> {data['price']} TL | {data['title'][:30]}...")
