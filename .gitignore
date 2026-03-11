@@ -86,3 +86,4 @@ __pycache__/
 .scrapy/
 daily_mail_sent.json
 zombie_mail_sent.json
+

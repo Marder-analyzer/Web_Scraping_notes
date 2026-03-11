@@ -6,6 +6,83 @@ import sys
 import os
 from datetime import datetime, timezone
 
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import json
+import pytz
+from dotenv import load_dotenv
+
+
+load_dotenv()
+MAIL_SENDER = os.getenv("MAIL_SENDER", "")
+MAIL_APP_PASS = os.getenv("MAIL_APP_PASS", "")
+TR_TZ = pytz.timezone("Europe/Istanbul")
+
+def notify_bot_status(bot_id, is_start=True, exit_code=None):
+    """Dashboard'daki mevcut HTML mail yapısını kullanarak şık bildirimler atar."""
+    if bot_id == "ana_bot":
+        return
+    # Kayıtlı maili bul
+    if not os.path.exists("saved_mails.json"): return
+    with open("saved_mails.json", "r") as f:
+        mails = json.load(f)
+    if not mails: return
+    target_mail = mails[0]
+
+    zaman = datetime.now(TR_TZ).strftime('%d/%m/%Y %H:%M:%S')
+
+    # Duruma göre renk, ikon ve mesaj belirle
+    if is_start:
+        subject = f"🚀 NeuraNovaV: {bot_id.upper()} Sahaya Sürüldü"
+        renk = "#1565c0"  # Mavi
+        durum_metni = "🟢 BAŞLATILDI"
+        mesaj = "Bot başarıyla sahaya sürüldü ve veri toplamaya/işlemeye başladı."
+    else:
+        if exit_code == 0:
+            subject = f"🏁 NeuraNovaV: {bot_id.upper()} Görevi Tamamladı"
+            renk = "#2e7d32"  # Yeşil
+            durum_metni = "✅ BAŞARIYLA TAMAMLANDI (İş Kalmadı)"
+            mesaj = "Bot atanan tüm işleri bitirdi ve güvenli bir şekilde sistemden ayrıldı."
+        elif exit_code == "Bilinmiyor":
+            subject = f"🛑 NeuraNovaV: {bot_id.upper()} Durduruldu"
+            renk = "#e65100"  # Turuncu
+            durum_metni = "🛑 MANUEL DURDURULDU"
+            mesaj = "Bot kullanıcı tarafından Dashboard üzerinden veya sistem tarafından durduruldu."
+        else:
+            subject = f"🚨 NeuraNovaV: {bot_id.upper()} ÇÖKTÜ!"
+            renk = "#c62828"  # Kırmızı
+            durum_metni = f"❌ HATA İLE ÇÖKTÜ (Çıkış Kodu: {exit_code})"
+            mesaj = "Bot beklenmedik bir hatayla karşılaştı ve kapandı. Lütfen Dashboard loglarını kontrol edin."
+
+    # Dashboard tarzı şık HTML Gövdesi
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:20px">
+    <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px;box-shadow:0 2px 8px #ccc">
+        <h2 style="color:{renk}; margin-top:0;">{durum_metni}</h2>
+        <p style="color:#555; font-size:16px;"><b>🤖 Bot ID:</b> {bot_id}</p>
+        <p style="color:#555; font-size:16px;"><b>📅 Zaman:</b> {zaman}</p>
+        <hr style="border:1px solid #eee; margin:15px 0;"/>
+        <p style="color:#333; font-size:15px;">{mesaj}</p>
+        <p style="color:#888;font-size:12px; margin-top:20px;">NeuraNovaV Komuta Merkezi Otomatik Bildirimi</p>
+    </div></body></html>
+    """
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"NeuraNovaV Komuta <{MAIL_SENDER}>"
+        msg["To"] = target_mail
+        msg.attach(MIMEText(html_body, "html"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(MAIL_SENDER, MAIL_APP_PASS)
+            server.sendmail(MAIL_SENDER, target_mail, msg.as_string())
+        print(f"📧 Durum Maili Gönderildi: {bot_id} -> {durum_metni}")
+    except Exception as e:
+        print(f"⚠️ Mail gönderilemedi: {e}")
+
+
 print("💂‍♂️ NeuraNovaV Bot Manager (Komutan) Başlatıldı! Emirler bekleniyor...")
 
 MONGO_URI = "mongodb://localhost:27017/"
@@ -18,8 +95,25 @@ cmd_col = db["bot_commands"]
 # İşletim sisteminde çalışan süreçleri takip edeceğimiz sözlük
 # Format: {"ana_bot": <subprocess.Popen object>, ...}
 active_processes = {}
-
 os.makedirs("logs", exist_ok=True)
+
+def sync_with_db():
+    """Manager açıldığında DB'de 'çalışıyor' görünen botları kontrol eder."""
+    running_in_db = list(cmd_col.find({"is_running": True}))
+    for bot in running_in_db:
+        pid = bot.get("pid")
+        bot_id = bot.get("bot_id")
+        if pid and psutil.pid_exists(pid):
+            if bot_id not in active_processes:
+                active_processes[bot_id] = pid 
+                print(f"🔄 Zombi bot bulundu ve kontrol altına alındı: {bot_id} (PID: {pid})")
+        else:
+            cmd_col.update_one({"bot_id": bot_id}, {"$set": {"is_running": False, "status": "stopped"}})
+
+# Döngüden önce mutlaka çalıştır
+sync_with_db()
+
+
 
 def kill_process_tree(pid):
     """Verilen PID ve ona bağlı tüm alt süreçleri (Chrome sekmeleri dahil) acımasızca öldürür."""
@@ -37,6 +131,35 @@ def get_latest_job_id():
     """Playwright'ın hangi Scrapy oturumuna bağlanacağını bulur."""
     latest_job = db.jobs.find_one(sort=[("start_time", pymongo.DESCENDING)])
     return latest_job["job_id"] if latest_job else None
+
+def get_actual_job_id():
+    """
+    Playwright işçilerinin hangi Scrapy oturumuna (Job) 
+    veri yazacağını belirlemek için en taze ID'yi getirir.
+    """
+    latest = db.jobs.find_one(sort=[("start_time", pymongo.DESCENDING)])
+    return latest["job_id"] if latest else None
+
+def close_active_jobs_in_db(bot_id, manual_stop=False):
+    """Sadece ana botlar kapandığında genel durumu günceller, yan botlar genel durumu bozamaz."""
+    # Playwright (Yan) botları ana durumu değiştiremez! Filtre:
+    if bot_id in ["pw_hata", "pw_fiyat"]:
+        return 
+        
+    # Manuel durdurulduysa durumu farklı yaz
+    yeni_durum = "Manuel Durduruldu" if manual_stop else "Tamamlandı"
+    
+    try:
+        db.jobs.update_many(
+            {"status": "Running"}, 
+            {"$set": {
+                "status": yeni_durum, 
+                "end_time": datetime.now(timezone.utc)
+            }}
+        )
+    except Exception as e:
+        pass
+# ---------------------------
 
 while True:
     try:
@@ -72,9 +195,10 @@ while True:
                         cmd_list.extend(["--job_id", job_id])
                 
                 # Botu Başlat!
-                with open(log_file, "a", encoding="utf-8") as f:
-                    f.write(f"\n--- YENİ OTURUM: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
-                    proc = subprocess.Popen(cmd_list, stdout=f, stderr=subprocess.STDOUT, text=True)
+                f = open(log_file, "a", encoding="utf-8", errors="ignore")
+                f.write(f"\n--- YENİ OTURUM: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+                f.flush()
+                proc = subprocess.Popen(cmd_list, stdout=f, stderr=subprocess.STDOUT, text=True)
                 
                 active_processes[bot_id] = proc
                 
@@ -89,13 +213,17 @@ while True:
                     }}
                 )
                 print(f"🚀 {bot_id} başarıyla sahaya sürüldü! (PID: {proc.pid})")
+                notify_bot_status(bot_id, is_start=True)
                 
             elif action == "stop":
                 # Botu durdur
                 if bot_id in active_processes:
                     proc = active_processes[bot_id]
-                    kill_process_tree(proc.pid)
+                    kill_process_tree(proc.pid if hasattr(proc, 'pid') else proc)
                     del active_processes[bot_id]
+                    
+                
+                
                 else:
                     # Belki de script yeniden başladı ama OS'de çalışıyor, DB'den PID bulup öldür
                     eski_kayit = cmd_col.find_one({"bot_id": bot_id, "is_running": True})
@@ -103,24 +231,41 @@ while True:
                         kill_process_tree(eski_kayit["pid"])
                 
                 # MongoDB'ye "Durduruldu" raporu ver
-                cmd_col.update_one(
-                    {"bot_id": bot_id, "is_running": True}, # Tüm aktif olanları kapat
-                    {"$set": {
-                        "status": "stopped",
-                        "is_running": False,
-                        "pid": None,
+                cmd_col.update_many({"bot_id": bot_id, "is_running": True}, {
+                    "$set": {
+                        "is_running": False, 
+                        "status": "stopped", 
                         "stopped_at": datetime.now(timezone.utc)
-                    }}
-                )
+                    }
+                })
                 # Orijinal emri de tamamlandı işaretle
                 cmd_col.update_one({"_id": emir_id}, {"$set": {"status": "done"}})
                 print(f"🛑 {bot_id} komuta merkezinden gelen emirle durduruldu.")
+                
+                close_active_jobs_in_db(bot_id, manual_stop=True)
+                notify_bot_status(bot_id, is_start=False, exit_code="Bilinmiyor")
 
         # 2. ÇALIŞAN BOTLARIN SAĞLIK KONTROLÜ (Kendi kendine kapanmış mı?)
         for b_id, p in list(active_processes.items()):
-            if p.poll() is not None: # Bot kapanmış (hata veya başarıyla)
-                print(f"🏁 {b_id} görevini tamamladı veya kapandı. (Çıkış kodu: {p.poll()})")
-                cmd_col.update_many(
+            finished = False
+            exit_code = "Bilinmiyor"
+
+            # Durum A: Bot yeni başlatıldı (Popen objesi)
+            if hasattr(p, 'poll'):
+                if p.poll() is not None:
+                    finished = True
+                    exit_code = p.poll()
+            
+            # Durum B: Bot Manager açıldığında "zombi" olarak devralındı (int PID)
+            else:
+                import psutil
+                if not psutil.pid_exists(p):
+                    finished = True
+
+            if finished:
+                print(f"🏁 {b_id} görevini tamamladı veya kapandı. (Çıkış kodu: {exit_code})")
+                # Sadece 1 kere mail atılmasını garantiye almak için kaydı siliyoruz
+                eski_kayit = cmd_col.find_one_and_update(
                     {"bot_id": b_id, "is_running": True},
                     {"$set": {
                         "is_running": False,
@@ -129,9 +274,16 @@ while True:
                         "completed_at": datetime.now(timezone.utc)
                     }}
                 )
-                del active_processes[b_id]
+                
+                # Eğer kayıt bulunduysa (yani ilk kez kapanıyorsa) mail at
+                if eski_kayit:
+                    notify_bot_status(b_id, is_start=False, exit_code=exit_code)
+                    close_active_jobs_in_db(b_id, manual_stop=False) # Dashboard'u 2 dakika takılmaktan kurtarır
+                
+                if b_id in active_processes:
+                    del active_processes[b_id]
 
-        time.sleep(2) # CPU'yu yormamak için 2 saniye bekle ve tekrar kontrol et
+        time.sleep(2) # CPU'yu yormamak için ideal süre
 
     except Exception as e:
         print(f"❌ Bot Manager Hatası: {e}")

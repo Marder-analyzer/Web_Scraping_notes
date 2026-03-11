@@ -1,3 +1,9 @@
+import sys
+import os
+# Bunlar en üstte olsun
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 import time
 import pymongo
 import re
@@ -18,9 +24,14 @@ prices_col = db["price_history"]
 def update_pw_stats(job_id,gorev_adi, denenen, basarili):
     
     if not job_id:
-        return  # job_id verilmemişse yazmaya çalışma
+        print("⚠️ RAPOR İPTAL: job_id verilmediği için veritabanına yazılamadı!")
+        return
+        
+    simdi = datetime.now(timezone.utc)
+    print(f"📊 [Rapor Gönderiliyor] Job ID: {job_id} | Görev: {gorev_adi} | Denenen: {denenen} | Başarılı: {basarili}")
+    
     try:
-        db.jobs.update_one(
+        res = db.jobs.update_one(
             {"job_id": job_id},
             {
                 "$inc": {
@@ -28,12 +39,13 @@ def update_pw_stats(job_id,gorev_adi, denenen, basarili):
                     f"pw_{gorev_adi}_basarili": basarili
                 },
                 "$set": {
-                    "pw_last_ping": datetime.now(timezone.utc)
+                    "pw_last_ping": simdi
                 }
             }
         )
+        print(f"✅ [Veritabanı Yanıtı] Eşleşen Kayıt: {res.matched_count} | Güncellenen: {res.modified_count}")
     except Exception as e:
-        print(f"  ⚠️ Stats yazılamadı: {e}")
+        print(f"⚠️ Rapor veritabanına yazılamadı: {e}")
 
 def get_product_data_with_playwright(page, url):
     """Playwright ile ekrandan tüm verileri (Fiyat, Resimler, Özellikler vb.) eksiksiz söker."""
@@ -106,6 +118,7 @@ def get_product_data_with_playwright(page, url):
 
 def mod1_kuyruk_temizle(page,job_id):
     """SADECE fiyatı eksik olan hatalı URL'leri kurtarır."""
+    update_pw_stats(job_id, "hata_coz", 0, 0)
     while True:
         bekleyenler = list(failed_col.find({
             "cozuldu": False, 
@@ -148,9 +161,10 @@ def mod1_kuyruk_temizle(page,job_id):
                     }
                 )
                 print(f"  🔴 BAŞARISIZ: {status} -> {url.split('?')[0][-30:]}")
-        update_pw_stats("hata_coz", deneme_sayisi, basarili_sayisi)
-def mod2_fiyat_guncelle(page):
+        update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi)
+def mod2_fiyat_guncelle(page, job_id):
     """SADECE veritabanındaki kayıtlı ürünlerin bugünkü fiyatlarını günceller."""
+    update_pw_stats(job_id, "fiyat_guncelle", 0, 0)
     while True:
         simdi = datetime.now(timezone.utc)
         today_str = simdi.strftime("%Y-%m-%d")
@@ -193,11 +207,11 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    print(f"🚀 NeuraNovaV Playwright İşçisi Başlatıldı! | Görev: {args.gorev.upper()}")
+    print(f"NeuraNovaV Playwright İşçisi Başlatıldı! | Görev: {args.gorev.upper()}")
     if args.job_id:
         print(f"   Job ID: {args.job_id}")
     else:
-        print(f"   ⚠️  job_id verilmedi — istatistikler jobs koleksiyonuna yazılmayacak")
+        print(f"   job_id verilmedi — istatistikler jobs koleksiyonuna yazılmayacak")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True) 
@@ -211,10 +225,10 @@ if __name__ == "__main__":
                 mod2_fiyat_guncelle(page, args.job_id)
                 
         except KeyboardInterrupt:
-            print("\n🛑 Kullanıcı tarafından durduruldu.")
+            print("\nKullanıcı tarafından durduruldu.")
         finally:
             context.close()
             browser.close()
-            print("👋 Tarayıcı güvenle kapatıldı.")
+            print("Tarayıcı güvenle kapatıldı.")
             
     

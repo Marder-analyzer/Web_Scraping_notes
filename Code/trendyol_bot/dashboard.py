@@ -29,7 +29,7 @@ TR_TZ            = pytz.timezone("Europe/Istanbul")
 # SAYFA YAPILANDIRMASI
 # ─────────────────────────────────────────────
 st.set_page_config(page_title="NeuraNovaV Komuta Merkezi", page_icon="🛸", layout="wide")
-refresh_count = st_autorefresh(interval=30000, limit=100000, key="auto_refresh")
+refresh_count = st_autorefresh(interval=8000, limit=100000, key="auto_refresh")
 
 # Ekran kararmasını ve "Running..." ikonunu engelle
 st.markdown("""
@@ -480,7 +480,7 @@ if latest_job:
     # ── ZOMBIE JOB KONTROLÜ ──
     if last_ping and is_running:
         fark_sn = (datetime.now(timezone.utc) - last_ping.replace(tzinfo=timezone.utc)).total_seconds()
-        if fark_sn > 120:
+        if fark_sn > 160:
             is_running  = False
             sessiz_dk   = int(fark_sn // 60)
             status_text = f"🟡 BOT YANIT VERMİYOR ({sessiz_dk} dakikadır sinyal yok)"
@@ -521,6 +521,15 @@ if latest_job:
     
     if latest_job:
         st.markdown("---")
+        
+        bekleyen_hata = db.failed_urls.count_documents({"cozuldu": False})
+        
+        # 2. Fiyat Güncelleme Kuyruğu (Toplam ürün - bugün fiyatı alınanlar)
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        bugun_guncellenen = db.price_history.count_documents({"date": today_str})
+        toplam_urun = db.products.count_documents({})
+        bekleyen_fiyat = max(0, toplam_urun - bugun_guncellenen) # Eksiye düşmesini engelle
+        
         st.subheader("🚒 Playwright İşçi Performansı")
         pwc1, pwc2, pwc3 = st.columns(3)
 
@@ -528,20 +537,20 @@ if latest_job:
         denenen_hata = latest_job.get("pw_hata_coz_denenen", 0)
         basarili_hata = latest_job.get("pw_hata_coz_basarili", 0)
         pwc1.metric(
-            "🚒 İtfaiye: Kurtarılan Ürün", 
-            f"{basarili_hata}", 
+            "🚒 İtfaiye: Çözülen / Bekleyen", 
+            f"{basarili_hata} / {bekleyen_hata}", 
             delta=f"{denenen_hata} deneme",
-            help="Playwright'ın hata kuyruğundan alıp başarıyla veritabanına döndürdüğü ürünler."
+            help="Playwright'ın hata kuyruğundan kurtardığı ürünler. Sağdaki rakam kuyrukta bekleyen (cozuldu: False) sayıdır."
         )
 
         # 2. Güvenilir Fiyat Güncelleme
         denenen_fiyat = latest_job.get("pw_fiyat_guncelle_denenen", 0)
         basarili_fiyat = latest_job.get("pw_fiyat_guncelle_basarili", 0)
         pwc2.metric(
-            "🐢 PW: Fiyat Güncelleme", 
-            f"{basarili_fiyat}", 
+            "🐢 PW Fiyat: Güncellenmiş / Bekleyen", 
+            f"{basarili_fiyat} / {bekleyen_fiyat}", 
             delta=f"{denenen_fiyat} deneme",
-            help="Zorlu ürünlerin Playwright ile güncellenme başarısı."
+            help="Playwright ile fiyatı güncellenenler. Sağdaki rakam bugün henüz fiyatı çekilmeyen ürün sayısını gösterir."
         )
     st.write("")
 
