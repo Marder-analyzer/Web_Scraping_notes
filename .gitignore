@@ -87,3 +87,5 @@ __pycache__/
 daily_mail_sent.json
 zombie_mail_sent.json
 
+/Code/trendyol_bot/logs
+/Code/trendyol_bot/proxies.txt

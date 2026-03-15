@@ -143,8 +143,8 @@ def get_actual_job_id():
 def close_active_jobs_in_db(bot_id, manual_stop=False):
     """Sadece ana botlar kapandığında genel durumu günceller, yan botlar genel durumu bozamaz."""
     # Playwright (Yan) botları ana durumu değiştiremez! Filtre:
-    if bot_id in ["pw_hata", "pw_fiyat"]:
-        return 
+    if bot_id != "ana_bot":   # Sadece ana_bot ana durumu kapatabilir
+        return
         
     # Manuel durdurulduysa durumu farklı yaz
     yeni_durum = "Manuel Durduruldu" if manual_stop else "Tamamlandı"
