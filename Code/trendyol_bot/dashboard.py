@@ -475,7 +475,15 @@ if latest_job:
     job_id     = latest_job.get("job_id", "")
     is_running = latest_job.get("status") == "Running"
     last_ping  = latest_job.get("last_ping") or latest_job.get("start_time")
-    status_text = "🟢 AKTİF ÇALIŞIYOR" if is_running else "🔴 TAMAMLANDI"
+    job_status = latest_job.get("status", "")
+    if is_running:
+        status_text = "🟢 AKTİF ÇALIŞIYOR"
+    elif job_status == "Manuel Durduruldu":
+        status_text = "🛑 MANUEL DURDURULDU"
+    elif job_status in ("Tamamlandı", "completed"):
+        status_text = "🔴 TAMAMLANDI"
+    else:
+        status_text = f"🔴 {job_status}" if job_status else "🔴 TAMAMLANDI"
 
     # ── ZOMBIE JOB KONTROLÜ ──
     if last_ping and is_running:
