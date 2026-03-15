@@ -461,7 +461,7 @@ if not db_online:
     st.stop()
 
 db = client["neuranovav_db"]
-
+cmd_col = client["neuranovav_db"]["bot_commands"]
 default_mail = load_saved_mails()
 default_mail = default_mail[0] if default_mail else None
 
@@ -476,14 +476,22 @@ if latest_job:
     is_running = latest_job.get("status") == "Running"
     last_ping  = latest_job.get("last_ping") or latest_job.get("start_time")
     job_status = latest_job.get("status", "")
+    ana_cmd = cmd_col.find_one({"bot_id": "ana_bot"}) if db_online else None
+    ana_cmd_status = ana_cmd.get("status", "") if ana_cmd else ""
+
     if is_running:
-        status_text = "🟢 AKTİF ÇALIŞIYOR"
+        if ana_cmd_status == "paused":
+            status_text = "⏳ PROXY BEKLENİYOR"
+        else:
+            status_text = "🟢 AKTİF ÇALIŞIYOR"
     elif job_status == "Manuel Durduruldu":
         status_text = "🛑 MANUEL DURDURULDU"
     elif job_status in ("Tamamlandı", "completed"):
-        status_text = "🔴 TAMAMLANDI"
+        status_text = "✅ TAMAMLANDI"
+    elif job_status == "error":
+        status_text = "❌ HATA"
     else:
-        status_text = f"🔴 {job_status}" if job_status else "🔴 TAMAMLANDI"
+        status_text = f"🔴 {job_status}" if job_status else "💤 UYKU MODU"
 
     # ── ZOMBIE JOB KONTROLÜ ──
     if last_ping and is_running:
@@ -491,7 +499,10 @@ if latest_job:
         if fark_sn > 160:
             is_running  = False
             sessiz_dk   = int(fark_sn // 60)
-            status_text = f"🟡 BOT YANIT VERMİYOR ({sessiz_dk} dakikadır sinyal yok)"
+            if ana_cmd_status == "paused":
+                status_text = "⏳ PROXY BEKLENİYOR"
+            else:
+                status_text = f"🟡 BOT YANIT VERMİYOR ({sessiz_dk} dakikadır sinyal yok)"
             
             if default_mail and get_zombie_job_id() != job_id:
                 tp   = db.products.count_documents({})
