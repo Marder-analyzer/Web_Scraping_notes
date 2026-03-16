@@ -94,7 +94,10 @@ class LiveProxyUpdater:
             log.warning(f"mongo bağlantısı yok, proxy logu atlanacak | {e}")
 
         self.task = task.LoopingCall(self._trigger_update)
-        self.task.start(self.interval, now=True)  # başlangıçta hemen çek
+        self.task.start(self.interval, now=True)
+        
+        self.health_task = task.LoopingCall(self._check_proxy_health)
+        self.health_task.start(120, now=False)
         log.info(
             f"proxy güncelleyici aktif | "
             f"{len(PROXY_SOURCES)} kaynak | "
@@ -104,6 +107,8 @@ class LiveProxyUpdater:
     def spider_closed(self, spider):
         if hasattr(self, "task") and self.task.running:
             self.task.stop()
+        if hasattr(self, "health_task") and self.health_task.running:
+            self.health_task.stop()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Güncelleme akışı
@@ -206,6 +211,11 @@ class LiveProxyUpdater:
         # Madde 6: TR önce, yabancı sonra
         ordered = result["tr"] + result["foreign"]
         ordered = self._filter_retired(ordered)
+        
+        if not ordered:
+            self._enter_sleep_mode()
+            return
+        
         added          = 0
         banned_removed = 0
         mw_ref         = None
@@ -264,21 +274,48 @@ class LiveProxyUpdater:
 
         if self._sleeping:
             self._sleeping = False
-            log.info("uyku modundan çıkıldı, proxy havuzu doldu")
+            try:
+                for mw in self.crawler.engine.downloader.middleware.middlewares:
+                    if mw.__class__.__name__ == "RotatingProxyMiddleware":
+                        if hasattr(mw, '_original_process_request'):
+                            mw.process_request = mw._original_process_request
+                            log.info("RotatingProxyMiddleware yeniden aktif | proxy havuzu doldu")
+                        break
+            except Exception as e:
+                log.warning(f"proxy geçişi geri alınamadı | {e}")
 
     def _enter_sleep_mode(self):
-        """
-        Madde 7: Proxy kaynakları boş veya erişilemez.
-        Kendi IP'ye GEÇİLMEZ. 10 dakika bekle, tekrar dene.
-        """
         self._sleeping = True
-        log.warning(
-            f"proxy havuzu boş | "
-            f"GÜVENL MOD: kendi IP kullanılmıyor | "
-            f"{SLEEP_ON_EMPTY // 60} dk sonra tekrar denenecek"
-        )
+        log.warning("proxy havuzu boş | direkt bağlantıya geçiliyor (kendi IP)")
+        try:
+            for mw in self.crawler.engine.downloader.middleware.middlewares:
+                if mw.__class__.__name__ == "RotatingProxyMiddleware":
+                    mw._original_process_request = mw.process_request
+                    mw.process_request = lambda request, spider: None
+                    log.info("RotatingProxyMiddleware devre dışı | direkt bağlantı aktif")
+                    break
+        except Exception as e:
+            log.warning(f"direkt geçiş başarısız | {e}")
         self._send_proxy_alert()
         reactor.callLater(SLEEP_ON_EMPTY, self._trigger_update)
+        
+    def _check_proxy_health(self):
+        """Her 2 dakikada bir: tüm proxiler dead ise direkt bağlantıya geç."""
+        if self._sleeping:
+            return
+        try:
+            for mw in self.crawler.engine.downloader.middleware.middlewares:
+                if mw.__class__.__name__ == "RotatingProxyMiddleware":
+                    good = len(mw.proxies.good)
+                    unchecked = len(mw.proxies.unchecked)
+                    reanimated = len(mw.proxies.reanimated)
+                    if good == 0:
+
+                        log.warning("proxy sağlık kontrolü: tüm proxiler dead | direkt geçiş")
+                        self._enter_sleep_mode()
+                    break
+        except Exception as e:
+            log.warning(f"proxy sağlık kontrolü hatası | {e}")
 
     def _send_proxy_alert(self):
         """Tüm proxy kaynakları erişilemezse dashboard'daki default mail'e bildirim atar."""
@@ -459,3 +496,20 @@ class LiveProxyUpdater:
             )
         except Exception as e:
             log.warning(f"URL hata kaydı yazılamadı | {e}")
+            
+    def _check_proxy_health(self):
+        """Her 2 dakikada bir: tüm proxiler dead ise direkt bağlantıya geç."""
+        if self._sleeping:
+            return
+        try:
+            for mw in self.crawler.engine.downloader.middleware.middlewares:
+                if mw.__class__.__name__ == "RotatingProxyMiddleware":
+                    good = len(mw.proxies.good)
+                    unchecked = len(mw.proxies.unchecked)
+                    reanimated = len(mw.proxies.reanimated)
+                    if good == 0 and unchecked == 0 and reanimated == 0:
+                        log.warning("proxy sağlık kontrolü: tüm proxiler dead | direkt geçiş")
+                        self._enter_sleep_mode()
+                    break
+        except Exception as e:
+            log.warning(f"proxy sağlık kontrolü hatası | {e}")

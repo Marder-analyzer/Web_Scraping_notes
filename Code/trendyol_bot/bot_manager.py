@@ -239,7 +239,8 @@ while True:
                     }
                 })
                 # Orijinal emri de tamamlandı işaretle
-                cmd_col.update_one({"_id": emir_id}, {"$set": {"status": "done"}})
+                cmd_col.update_one({"_id": emir_id}, {"$set": {"status": "processed", "stop_processed": True}})
+
                 print(f"🛑 {bot_id} komuta merkezinden gelen emirle durduruldu.")
                 
                 close_active_jobs_in_db(bot_id, manual_stop=True)
@@ -265,11 +266,15 @@ while True:
             if finished:
                 print(f"🏁 {b_id} görevini tamamladı veya kapandı. (Çıkış kodu: {exit_code})")
                 # Sadece 1 kere mail atılmasını garantiye almak için kaydı siliyoruz
+                yeni_status = "completed" if exit_code == 0 else "error"
+                error_reason = None if exit_code == 0 else f"crash_code_{exit_code}"
+
                 eski_kayit = cmd_col.find_one_and_update(
                     {"bot_id": b_id, "is_running": True},
                     {"$set": {
                         "is_running": False,
-                        "status": "completed",
+                        "status": yeni_status,
+                        "error_reason": error_reason,
                         "pid": None,
                         "completed_at": datetime.now(timezone.utc)
                     }}
