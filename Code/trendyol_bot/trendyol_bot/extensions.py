@@ -57,6 +57,8 @@ class LiveProxyUpdater:
     """
 
     def __init__(self, crawler):
+        self.local_error_count = 0
+        self.is_paused = False
         self.crawler = crawler
         self.interval = 900
         self._sleeping = False
@@ -72,7 +74,10 @@ class LiveProxyUpdater:
 
     @classmethod
     def from_crawler(cls, crawler):
+        from scrapy import signals
         ext = cls(crawler)
+        
+        crawler.signals.connect(ext.response_received, signal=signals.response_received)
         crawler.signals.connect(ext.spider_opened, signal=signals.spider_opened)
         crawler.signals.connect(ext.spider_closed, signal=signals.spider_closed)
         
@@ -271,6 +276,23 @@ class LiveProxyUpdater:
         )
 
         self._log_source_status(result)
+        
+        if getattr(self, 'is_paused', False):
+            log.info("✅ Yeni proxyler havuza ulaştı! Motor uykudan UYANDIRILIYOR...")
+            self.is_paused = False
+            self.local_error_count = 0
+            self.crawler.engine.unpause() # Motorun buzunu çöz!
+            
+            # Dashboard'u tekrar yeşile (Çalışıyor) çevir
+            try:
+                import pymongo
+                client = pymongo.MongoClient("mongodb://localhost:27017/")
+                client["neuranovav_db"]["bot_commands"].update_one(
+                    {"bot_id": "ana_bot"}, 
+                    {"$set": {"status": "running", "error_reason": ""}}
+                )
+            except Exception as e:
+                log.warning(f"DB Unpause güncelleme hatası: {e}")
 
         if self._sleeping:
             self._sleeping = False
@@ -298,6 +320,32 @@ class LiveProxyUpdater:
             log.warning(f"direkt geçiş başarısız | {e}")
         self._send_proxy_alert()
         reactor.callLater(SLEEP_ON_EMPTY, self._trigger_update)
+        
+    def response_received(self, response, request, spider):
+        # Sadece kendi IP'mizdeysek ve bot uykuda değilse kontrol et
+        if self._sleeping and not self.is_paused:
+            if response.status in [403, 429, 503]:
+                self.local_error_count += 1
+                log.warning(f"Kendi IP'miz hata aldı ({response.status}) | Hata Sayısı: {self.local_error_count}/5")
+                
+                if self.local_error_count >= 5: # 5 kere üst üste hata alırsa
+                    self._pause_engine()
+            elif response.status == 200:
+                self.local_error_count = 0 # Başarılı olursa sayacı sıfırla
+
+    def _pause_engine(self):
+        log.error("🚨 Kendi IP'miz de ban yedi! Motor uykusuna (PAUSE) geçiliyor...")
+        self.is_paused = True
+        self.crawler.engine.pause() # Scrapy'i dondur!
+        
+        # Dashboard'u sarıya çevir (Proxy bekleniyor)
+        try:
+            self.client["neuranovav_db"]["bot_commands"].update_one(
+                {"bot_id": "ana_bot"}, 
+                {"$set": {"status": "paused", "error_reason": "kendi_ip_banlandi"}}
+            )
+        except Exception as e:
+            log.warning(f"DB Pause güncelleme hatası: {e}")
         
     def _check_proxy_health(self):
         """Her 2 dakikada bir: tüm proxiler dead ise direkt bağlantıya geç."""
