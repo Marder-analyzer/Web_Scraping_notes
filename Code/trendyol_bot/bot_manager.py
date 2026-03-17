@@ -471,4 +471,3 @@ while True:
     except Exception as e:
         print(f"❌ Bot Manager Hatası: {e}")
         time.sleep(5)
-        
