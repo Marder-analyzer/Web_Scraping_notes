@@ -214,6 +214,7 @@ cmd_col = db["bot_commands"]
 # Format: {"ana_bot": <subprocess.Popen object>, ...}
 active_processes = {}
 os.makedirs("logs", exist_ok=True)
+os.makedirs("crawls", exist_ok=True)
 
 def sync_with_db():
     """Manager açıldığında DB'de 'çalışıyor' görünen botları kontrol eder."""
@@ -347,7 +348,7 @@ while True:
                 log_file = os.path.join("logs", f"{bot_id}.log")
                 
                 if bot_id == "ana_bot":
-                    cmd_list = [sys.executable, "-m", "scrapy", "crawl", "trendyol"]
+                    cmd_list = [sys.executable, "-m", "scrapy", "crawl", "trendyol", "-s", "JOBDIR=crawls/trendyol_state"]
                 elif bot_id == "scrapy_fiyat":
                     cmd_list = [sys.executable, "-m", "scrapy", "crawl", "fiyat_guncelle"]
                 elif bot_id in ["pw_hata", "pw_fiyat", "pw_liste"]:
