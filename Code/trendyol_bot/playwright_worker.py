@@ -252,7 +252,7 @@ def mod3_liste_kurtar(context, job_id):
                 
                 for urun_url in urun_linkleri:
                     deneme_sayisi += 1
-                    data, status = get_product_data_with_playwright(page, urun_url)
+                    data, status = get_product_data_with_playwright(context, urun_url) # 
                     
                     if data and data.get("price"):
                         products_col.update_one(
