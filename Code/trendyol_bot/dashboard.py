@@ -13,6 +13,7 @@ import json
 import os
 import pytz
 import psutil
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -570,9 +571,15 @@ if latest_job:
                 {"_id": bot["_id"]}, 
                 {"$set": {"is_running": False, "pid": None, "status": "zombie_cleaned"}}
             )
+    ram = psutil.virtual_memory()
+    ram_yuzde = ram.percent
+    ram_renk = "🔴" if ram_yuzde > 85.0 else "🟡" if ram_yuzde > 70.0 else "🟢"
 
-    # Dashboard Vitrini
-    st.metric(label="🕵️ Arka Planda Çalışan Aktif Botlar", value=gercek_calisan_sayisi)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric(label="🕵️ Arka Planda Çalışan Aktif Botlar", value=gercek_calisan_sayisi)
+    with col2:
+        st.metric(label=f"{ram_renk} Sistem RAM Kullanımı", value=f"%{ram_yuzde:.1f}")
 
     # --- 2. TÜM BOTLARI ZORLA KAPAT BUTONU ---
     if st.button("🚨 TÜM BOTLARI VE SÜREÇLERİ ZORLA KAPAT (KILL ALL)", use_container_width=True):
@@ -582,6 +589,17 @@ if latest_job:
             {"$set": {"action": "force_stop", "stop_processed": False}}
         )
         st.error("⚠️ Tüm botlara imha emri gönderildi! İşlem saniyeler içinde tamamlanacak.")
+
+    # --- 3. YENİ: PANİK BUTONU (GÖRÜNMEZ ZOMBİLERİ TEMİZLE) ---
+    if st.button("☣️ GİZLİ SÜREÇLERİ (ZOMBİ CHROME'LARI) TEMİZLE (PANİK BUTONU)", type="primary", use_container_width=True):
+        cmd_col.update_one(
+            {"bot_id": "system"},
+            {"$set": {"action": "panic_kill", "status": "pending", "stop_processed": False}},
+            upsert=True
+        )
+        st.toast("💀 Panik emri Komuta Merkezi'ne gönderildi! RAM temizleniyor...")
+        time.sleep(1) # Tost mesajı ekranda görünsün diye 1 sn bekle
+        st.rerun() # RAM'in güncel halini göstermek için sayfayı yenile
     
     st.markdown("---")
     

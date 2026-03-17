@@ -83,6 +83,58 @@ def notify_bot_status(bot_id, is_start=True, exit_code=None):
         print(f"⚠️ Mail gönderilemedi: {e}")
 
 
+son_ram_maili = 0
+
+def slaughter_zombies():
+    """Görünmez (Headless) Chrome'ları ve asılı kalan Playwright işçilerini acımasızca katleder."""
+    killed_count = 0
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            name = (proc.info.get('name') or "").lower()
+            cmdline = proc.info.get('cmdline') or []
+            cmd_str = " ".join(cmdline).lower()
+
+            if (('chrome' in name or 'chromium' in name) and '--headless' in cmd_str) or \
+               ('python' in name and 'playwright_worker.py' in cmd_str):
+                proc.kill()
+                killed_count += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return killed_count
+
+def check_ram_and_alert():
+    global son_ram_maili
+    ram_yuzde = psutil.virtual_memory().percent
+    
+    if ram_yuzde > 85.0 and (time.time() - son_ram_maili > 3600):
+        print(f"⚠️ KRİTİK UYARI: RAM Kullanımı %{ram_yuzde}! Mail atılıyor...")
+        try:
+            if not os.path.exists("saved_mails.json"): return
+            with open("saved_mails.json", "r") as f:
+                target_mail = json.load(f)[0]
+                
+            html_body = f"""<html><body style="font-family:Arial,sans-serif;padding:20px">
+            <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px;border-left:8px solid #d32f2f">
+                <h2 style="color:#d32f2f; margin-top:0;">🚨 KRİTİK RAM UYARISI</h2>
+                <p>Sunucu Belleği: <b>%{ram_yuzde}</b> seviyesine ulaştı!</p>
+                <p>Sistemde asılı kalan süreçler olabilir. Lütfen Dashboard üzerinden <b>Zombileri Temizle (Panik Butonu)</b> özelliğini kullanın.</p>
+            </div></body></html>"""
+            
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = f"🚨 NeuraNovaV RAM Uyarısı: %{ram_yuzde}"
+            msg["From"] = f"NeuraNovaV Komuta <{MAIL_SENDER}>"
+            msg["To"] = target_mail
+            msg.attach(MIMEText(html_body, "html"))
+
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(MAIL_SENDER, MAIL_APP_PASS)
+                server.sendmail(MAIL_SENDER, target_mail, msg.as_string())
+                
+            son_ram_maili = time.time()
+            print("📧 RAM Uyarı Maili Gönderildi!")
+        except Exception as e:
+            print(f"⚠️ RAM Maili gönderilemedi: {e}")
+
 print("💂‍♂️ NeuraNovaV Bot Manager (Komutan) Başlatıldı! Emirler bekleniyor...")
 
 MONGO_URI = "mongodb://localhost:27017/"
@@ -163,6 +215,8 @@ def close_active_jobs_in_db(bot_id, manual_stop=False):
 
 while True:
     try:
+        
+        check_ram_and_alert()
         # 1. MONGODB'DEN YENİ EMİRLERİ (PENDING) KONTROL ET
         bekleyen_emirler = list(cmd_col.find({
             "$or": [
@@ -175,6 +229,15 @@ while True:
             bot_id = emir["bot_id"]
             action = emir["action"]
             emir_id = emir["_id"]
+            
+            
+            if action == "panic_kill":
+                print("🚨 PANİK BUTONUNA BASILDI! Sistemdeki tüm zombiler temizleniyor...")
+                oldurulen = slaughter_zombies()
+                print(f"💀 Temizlik Tamamlandı! {oldurulen} adet gizli süreç yokedildi.")
+                
+                cmd_col.update_one({"_id": emir_id}, {"$set": {"status": "processed", "stop_processed": True}})
+                continue
             
             # --- ZORLA KAPATMA (FORCE STOP) MANTIĞI ---
             if action == "force_stop":

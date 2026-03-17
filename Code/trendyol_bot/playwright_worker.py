@@ -10,6 +10,7 @@ import re
 import argparse
 from datetime import datetime, timezone
 from playwright.sync_api import sync_playwright
+import gc
 
 # --- MONGODB BAĞLANTISI ---
 MONGO_URI = "mongodb://localhost:27017/"
@@ -302,7 +303,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NeuraNovaV Playwright İşçisi")
     parser.add_argument("--gorev", choices=['hata_coz', 'fiyat_guncelle', 'liste_kurtar'], required=True, 
                         help="Hangi işlemin yapılacağını seçin")
-    
     parser.add_argument("--job_id", default=None,
                         help="İlişkilendirilecek Scrapy job_id (opsiyonel)")
     
@@ -314,11 +314,33 @@ if __name__ == "__main__":
     else:
         print(f"   job_id verilmedi — istatistikler jobs koleksiyonuna yazılmayacak")
     
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True) 
-        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36")
-        
-        try:
+    try:
+        with sync_playwright() as p:
+            print("🔄 [SİSTEM] Tarayıcı Anti-Leak ve Endüstriyel modda başlatılıyor...")
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-dev-shm-usage",             # Linux RAM kilitlenmesini önler
+                    "--js-flags=--max-old-space-size=512", # RAM limitini 512MB'a kilitler
+                    "--disk-cache-size=1",                 # Disk %100 sorununu çözer (Diske yazmayı engeller)
+                    "--disable-disk-cache",
+                    "--disable-crash-reporter",
+                    "--disable-logging",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                    "--disable-background-networking",
+                    "--disable-extensions",
+                    "--disable-default-apps",
+                    "--blink-settings=imagesEnabled=false" # Görüntüleri indirmez, ağ ve RAM tasarrufu sağlar
+                ]
+            )
+            context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36")
+            
+            # DİKKAT: Burada tekil bir 'page' oluşturmuyoruz! 
+            # Context'i gönderiyoruz ki fonksiyonlar içeride kendi sekmelerini açıp kapatabilsin.
+            
             if args.gorev == 'hata_coz':
                 mod1_kuyruk_temizle(context, args.job_id)
             elif args.gorev == 'fiyat_guncelle':
@@ -326,9 +348,14 @@ if __name__ == "__main__":
             elif args.gorev == 'liste_kurtar':
                 mod3_liste_kurtar(context, args.job_id)
                 
-        except KeyboardInterrupt:
-            print("\nKullanıcı tarafından durduruldu.")
-        finally:
             context.close()
             browser.close()
-            print("Tarayıcı güvenle kapatıldı.")
+            
+            # RAM'de kalan Python çöplerini zorla temizle
+            gc.collect()
+            print("🧹 [SİSTEM] Tarayıcı tamamen imha edildi. RAM ve Disk OS'e iade edildi.")
+            
+    except KeyboardInterrupt:
+        print("\n🛑 Kullanıcı tarafından durduruldu.")
+    except Exception as e:
+        print(f"\n❌ Kritik Hata: {e}")
