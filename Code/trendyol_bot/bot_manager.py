@@ -164,12 +164,46 @@ def close_active_jobs_in_db(bot_id, manual_stop=False):
 while True:
     try:
         # 1. MONGODB'DEN YENİ EMİRLERİ (PENDING) KONTROL ET
-        bekleyen_emirler = list(cmd_col.find({"status": "pending"}))
+        bekleyen_emirler = list(cmd_col.find({
+            "$or": [
+                {"status": "pending"},
+                {"action": "force_stop", "stop_processed": False}
+            ]
+        }))
         
         for emir in bekleyen_emirler:
             bot_id = emir["bot_id"]
             action = emir["action"]
             emir_id = emir["_id"]
+            
+            # --- ZORLA KAPATMA (FORCE STOP) MANTIĞI ---
+            if action == "force_stop":
+                print(f"🚨 ACİL İMHA EMRİ: {bot_id} için fiş çekiliyor...")
+                
+                # DB'den botun güncel PID'sini çek
+                bot_info = cmd_col.find_one({"bot_id": bot_id})
+                target_pid = bot_info.get("pid")
+                
+                if target_pid and psutil.pid_exists(target_pid):
+                    print(f"💀 PID {target_pid} imha ediliyor...")
+                    kill_process_tree(target_pid)
+                
+                # Veritabanını temizle
+                cmd_col.update_one(
+                    {"bot_id": bot_id},
+                    {"$set": {
+                        "is_running": False,
+                        "status": "force_killed",
+                        "pid": None,
+                        "action": "idle",
+                        "stop_processed": True
+                    }}
+                )
+                if bot_id in active_processes:
+                    del active_processes[bot_id]
+                
+                print(f"💀 {bot_id} tamamen sistemden kazındı.")
+                continue # Bu emir bitti, sıradakine geç
             
             print(f"📨 Yeni Emir Alındı: Bot [{bot_id}] -> Komut [{action.upper()}]")
             
@@ -293,3 +327,4 @@ while True:
     except Exception as e:
         print(f"❌ Bot Manager Hatası: {e}")
         time.sleep(5)
+        

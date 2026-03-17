@@ -12,6 +12,7 @@ from email.mime.multipart import MIMEMultipart
 import json
 import os
 import pytz
+import psutil
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -551,6 +552,37 @@ if latest_job:
             st.caption(b_stat)
     st.write("")
     
+    
+        # 1. GERÇEK ÇALIŞAN BOT SAYACINI HESAPLA
+    aktif_kayitlar = list(cmd_col.find({"is_running": True}))
+    gercek_calisan_sayisi = 0
+
+    for bot in aktif_kayitlar:
+        pid = bot.get("pid")
+        # İşletim sistemine soruyoruz: Bu PID gerçekten yaşıyor mu?
+        if pid and psutil.pid_exists(pid):
+            gercek_calisan_sayisi += 1
+        else:
+            # Zombi temizliği: PID ölmüş ama DB'de açık kalmışsa kapat
+            cmd_col.update_one(
+                {"_id": bot["_id"]}, 
+                {"$set": {"is_running": False, "pid": None, "status": "zombie_cleaned"}}
+            )
+
+    # Dashboard Vitrini
+    st.metric(label="🕵️ Arka Planda Çalışan Aktif Botlar", value=gercek_calisan_sayisi)
+
+    # --- 2. TÜM BOTLARI ZORLA KAPAT BUTONU ---
+    if st.button("🚨 TÜM BOTLARI VE SÜREÇLERİ ZORLA KAPAT (KILL ALL)", use_container_width=True):
+        # Veritabanındaki tüm botlara 'force_stop' emri gönderiyoruz
+        cmd_col.update_many(
+            {"is_running": True}, 
+            {"$set": {"action": "force_stop", "stop_processed": False}}
+        )
+        st.error("⚠️ Tüm botlara imha emri gönderildi! İşlem saniyeler içinde tamamlanacak.")
+    
+    st.markdown("---")
+    
     if latest_job:
         st.markdown("---")
         
@@ -890,6 +922,7 @@ if latest_job:
             
     
     st.markdown("---")
+    
 
     # ── FAZ 6: URL HATA TAKİP MERKEZİ ──
     st.subheader("🔴 URL Hata Takip Merkezi")
@@ -978,3 +1011,5 @@ if latest_job:
 
 else:
     st.warning("Henüz başlatılmış bir görev bulunamadı. Lütfen botu çalıştırın: `scrapy crawl trendyol`")
+    
+    
