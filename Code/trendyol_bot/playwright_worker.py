@@ -47,8 +47,9 @@ def update_pw_stats(job_id,gorev_adi, denenen, basarili):
     except Exception as e:
         print(f"⚠️ Rapor veritabanına yazılamadı: {e}")
 
-def get_product_data_with_playwright(page, url):
+def get_product_data_with_playwright(context, url):
     """Playwright ile ekrandan tüm verileri (Fiyat, Resimler, Özellikler vb.) eksiksiz söker."""
+    page = context.new_page()
     try:
         page.goto(url, wait_until="load", timeout=30000)
         page.wait_for_timeout(2000) 
@@ -115,8 +116,11 @@ def get_product_data_with_playwright(page, url):
             
     except Exception as e:
         return None, f"Hata: {str(e)[:50]}"
+    
+    finally:
+        page.close()
 
-def mod1_kuyruk_temizle(page,job_id):
+def mod1_kuyruk_temizle(context,job_id):
     """SADECE fiyatı eksik olan hatalı URL'leri kurtarır."""
     update_pw_stats(job_id, "hata_coz", 0, 0)
     while True:
@@ -138,7 +142,7 @@ def mod1_kuyruk_temizle(page,job_id):
         
         for item in bekleyenler:
             url = item["url"]
-            data, status = get_product_data_with_playwright(page, url)
+            data, status = get_product_data_with_playwright(context, url)
             
             if data and data.get("price"):
                 products_col.update_one({"url": url}, {"$set": {"title": data["title"], "category": data["category"], "images": data["images"], "explanation": data["explanation"], "attributes": data["attributes"], "last_seen": simdi, "scrape_method": "playwright"}}, upsert=True)
@@ -162,7 +166,7 @@ def mod1_kuyruk_temizle(page,job_id):
                 )
                 print(f"  🔴 BAŞARISIZ: {status} -> {url.split('?')[0][-30:]}")
         update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi)
-def mod2_fiyat_guncelle(page, job_id):
+def mod2_fiyat_guncelle(context, job_id):
     """SADECE veritabanındaki kayıtlı ürünlerin bugünkü fiyatlarını günceller."""
     update_pw_stats(job_id, "fiyat_guncelle", 0, 0)
     while True:
@@ -186,7 +190,7 @@ def mod2_fiyat_guncelle(page, job_id):
         
         for item in guncellenecekler:
             url = item["url"]
-            data, status = get_product_data_with_playwright(page, url)
+            data, status = get_product_data_with_playwright(context, url)
             
             if data and data.get("price"):
                 products_col.update_one({"url": url}, {"$set": {"last_seen": simdi, "images": data["images"], "explanation": data["explanation"], "attributes": data["attributes"], "scrape_method": "playwright"}})
@@ -196,7 +200,7 @@ def mod2_fiyat_guncelle(page, job_id):
             else:
                 print(f"  🟠 PAS GEÇİLDİ: {status} -> {url.split('?')[0][-30:]}")
         update_pw_stats(job_id, "fiyat_guncelle", deneme_sayisi, basarili_sayisi)
-def mod3_liste_kurtar(page, job_id):
+def mod3_liste_kurtar(context, job_id):
     """Liste sayfalarındaki (pi=) 403'lü URL'lere girer, 24 ürünü bulup kazır."""
     update_pw_stats(job_id, "hata_coz", 0, 0)
     
@@ -209,7 +213,7 @@ def mod3_liste_kurtar(page, job_id):
         
         if not bekleyenler:
             print("\n✅ Kurtarılacak liste sayfası kalmadı. Fiyat güncellemeye geçiliyor...")
-            mod2_fiyat_guncelle(page, job_id)
+            mod2_fiyat_guncelle(context, job_id)
             break
         
         print(f"\n[MOD 3] 🔍 {len(bekleyenler)} liste sayfası kurtarılıyor...")
@@ -224,6 +228,7 @@ def mod3_liste_kurtar(page, job_id):
             print(f"\n  📋 Liste sayfasına giriliyor: {liste_url[-60:]}")
             
             try:
+                page = context.new_page()  # LİSTE İÇİN GEÇİCİ SEKME AÇ
                 page.goto(liste_url, wait_until="load", timeout=30000)
                 page.wait_for_timeout(2000)
                 
@@ -232,6 +237,8 @@ def mod3_liste_kurtar(page, job_id):
                     let links = document.querySelectorAll("a.product-card");
                     return Array.from(links).map(a => a.href).filter(h => h.includes("trendyol.com"));
                 }''')
+                
+                page.close()
                 
                 if not urun_linkleri:
                     print(f"  ⚠️ Liste sayfasında ürün linki bulunamadı.")
@@ -310,15 +317,14 @@ if __name__ == "__main__":
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True) 
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36")
-        page = context.new_page()
         
         try:
             if args.gorev == 'hata_coz':
-                mod1_kuyruk_temizle(page, args.job_id)
+                mod1_kuyruk_temizle(context, args.job_id)
             elif args.gorev == 'fiyat_guncelle':
-                mod2_fiyat_guncelle(page, args.job_id)
+                mod2_fiyat_guncelle(context, args.job_id)
             elif args.gorev == 'liste_kurtar':
-                mod3_liste_kurtar(page, args.job_id)
+                mod3_liste_kurtar(context, args.job_id)
                 
         except KeyboardInterrupt:
             print("\nKullanıcı tarafından durduruldu.")
