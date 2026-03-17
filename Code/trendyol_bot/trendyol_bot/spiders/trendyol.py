@@ -77,6 +77,29 @@ class TrendyolSpider(scrapy.Spider):
         
     #linkleri çekmek için ilk ayarlamaları yapacağız. JavaScript ile çalışan bir site olduğu için Playwright kullanarak sayfanın tam olarak yüklenmesini sağlayacağız.
     def start_requests(self):
+        
+        # === 1. TOPLAM HEDEFİ HESAPLA VE DB'YE YAZ ===
+        try:
+            toplam_kombinasyon = len(self.categories)
+            
+            # Her arama linkinden ortalama kaç ürün kazıyacağını tahmin ediyoruz.
+            # Şimdilik 1 tam sayfa (24 ürün) olarak baz alıyoruz. İstediğin gibi değiştirebilirsin.
+            tahmini_urun_hedefi = toplam_kombinasyon * 24 
+            
+            import pymongo
+            client = pymongo.MongoClient("mongodb://localhost:27017/")
+            db = client["neuranovav_db"]
+            
+            # En son başlatılan oturumu (Job) bul ve tahmini ürün hedefini kaydet
+            latest_job = db.jobs.find_one(sort=[("start_time", pymongo.DESCENDING)])
+            if latest_job:
+                db.jobs.update_one(
+                    {"_id": latest_job["_id"]},
+                    {"$set": {"total_target_urls": tahmini_urun_hedefi}}
+                )
+        except Exception as e:
+            self.logger.warning(f"Hedef hesaplanamadı/yazılamadı: {e}")
+        
         for category in self.categories:
             # pi=1 (1. sayfa) parametresi ile başlıyoruz
             url = f"https://www.trendyol.com/{category}&pi=1"

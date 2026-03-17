@@ -516,6 +516,19 @@ if latest_job:
         clear_zombie_flag()
 
     st.subheader(f"Durum: {status_text}")
+    # === İLERLEME ÇUBUĞU (PROGRESS BAR) ===
+    total_target = latest_job.get("total_target_urls", 0)
+    total_proc = latest_job.get("total_processed", 0)
+    
+    if total_target > 0:
+        # Yüzdeyi hesapla (Maksimum %100 olsun diye min kullandık)
+        yuzde = min(100, int((total_proc / total_target) * 100))
+        # Streamlit progress bar 0.0 ile 1.0 arası değer alır
+        st.progress(yuzde / 100.0, text=f"🚀 Tarama İlerlemesi: %{yuzde} ({total_proc:,} / {total_target:,} Tahmini Ürün)")
+    else:
+        # Hedef henüz hesaplanmadıysa ufak bir bilgi ver
+        st.info("🔄 Tarama hedefi hesaplanıyor...")
+    
     st.markdown("##### 🤖 Alt Sistem Görev Durumları")
     col_b1, col_b2, col_b3, col_b4 = st.columns(4)
     
