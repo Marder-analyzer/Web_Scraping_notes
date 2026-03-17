@@ -102,38 +102,104 @@ def slaughter_zombies():
             pass
     return killed_count
 
+
+son_ram_maili = 0
+son_acil_kapatma = 0
 def check_ram_and_alert():
-    global son_ram_maili
+    global son_ram_maili, son_acil_kapatma
     ram_yuzde = psutil.virtual_memory().percent
+
     
-    if ram_yuzde > 85.0 and (time.time() - son_ram_maili > 3600):
-        print(f"⚠️ KRİTİK UYARI: RAM Kullanımı %{ram_yuzde}! Mail atılıyor...")
+    # --- KADEME 1: %80 — Uyarı Maili ---
+    if ram_yuzde > 80.0 and (time.time() - son_ram_maili > 3600):
+        print(f" RAM %{ram_yuzde} — Uyarı maili atılıyor...")
         try:
-            if not os.path.exists("saved_mails.json"): return
             with open("saved_mails.json", "r") as f:
                 target_mail = json.load(f)[0]
-                
             html_body = f"""<html><body style="font-family:Arial,sans-serif;padding:20px">
-            <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px;border-left:8px solid #d32f2f">
-                <h2 style="color:#d32f2f; margin-top:0;">🚨 KRİTİK RAM UYARISI</h2>
-                <p>Sunucu Belleği: <b>%{ram_yuzde}</b> seviyesine ulaştı!</p>
-                <p>Sistemde asılı kalan süreçler olabilir. Lütfen Dashboard üzerinden <b>Zombileri Temizle (Panik Butonu)</b> özelliğini kullanın.</p>
+            <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px;border-left:8px solid #f57c00">
+                <h2 style="color:#f57c00"> RAM UYARISI: %{ram_yuzde:.1f}</h2>
+                <p>Sistem belleği <b>%{ram_yuzde:.1f}</b> dolulukta. Playwright botları çalışıyorsa yakında otomatik kapatılabilir.</p>
+                <p>%92'yi geçerse tüm botlar otomatik durdurulacak.</p>
             </div></body></html>"""
-            
             msg = MIMEMultipart("alternative")
-            msg["Subject"] = f"🚨 NeuraNovaV RAM Uyarısı: %{ram_yuzde}"
+            msg["Subject"] = f" NeuraNovaV RAM Uyarısı: %{ram_yuzde:.1f}"
             msg["From"] = f"NeuraNovaV Komuta <{MAIL_SENDER}>"
             msg["To"] = target_mail
             msg.attach(MIMEText(html_body, "html"))
-
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
                 server.login(MAIL_SENDER, MAIL_APP_PASS)
                 server.sendmail(MAIL_SENDER, target_mail, msg.as_string())
-                
             son_ram_maili = time.time()
-            print("📧 RAM Uyarı Maili Gönderildi!")
+            print(" RAM uyarı maili gönderildi.")
         except Exception as e:
-            print(f"⚠️ RAM Maili gönderilemedi: {e}")
+            son_ram_maili = time.time()
+            print(f" RAM maili gönderilemedi: {e}")
+
+    # --- KADEME 2: %92 — Acil Otomatik Kapatma ---
+    if ram_yuzde > 92.0 and (time.time() - son_acil_kapatma > 1800):
+        print(f" KRİTİK: RAM %{ram_yuzde:.1f}! ACİL KAPATMA BAŞLIYOR...")
+        son_acil_kapatma = time.time()
+
+        # 1. Tüm PW botlarını DB üzerinden durdur
+        pw_botlar = ["pw_hata", "pw_fiyat", "pw_liste"]
+        for pw_bot in pw_botlar:
+            kayit = cmd_col.find_one({"bot_id": pw_bot, "is_running": True})
+            if kayit and kayit.get("pid"):
+                kill_process_tree(kayit["pid"])
+                cmd_col.update_one(
+                    {"bot_id": pw_bot},
+                    {"$set": {"is_running": False, "status": "killed_ram", "pid": None}}
+                )
+                print(f" {pw_bot} RAM koruma nedeniyle kapatıldı.")
+
+        # 2. Zombi chrome'ları temizle
+        oldurulen = slaughter_zombies()
+
+        # 3. Python GC
+        import gc
+        gc.collect()
+
+        # 4. Windows'ta WSL'yi kapat
+        if os.name == 'nt':
+            try:
+                subprocess.run(["wsl", "--shutdown"], timeout=10, capture_output=True)
+                print("🔧 WSL kapatıldı, RAM iade edildi.")
+            except Exception:
+                pass
+        
+        else:  # Linux/Ubuntu
+            try:
+                # Disk cache'i temizle (sudo gerektirir, sudoers'a eklenmiş olmalı)
+                subprocess.run(["sync"], timeout=5, capture_output=True)
+                subprocess.run(["sh", "-c", "echo 3 > /proc/sys/vm/drop_caches"], timeout=5, capture_output=True)
+                print("🔧 Linux bellek önbelleği temizlendi.")
+            except Exception:
+                pass
+
+        print(f"✅ Acil kapatma tamamlandı. {oldurulen} zombi temizlendi.")
+
+        # 5. Rapor maili
+        try:
+            with open("saved_mails.json", "r") as f:
+                target_mail = json.load(f)[0]
+            html_body = f"""<html><body style="font-family:Arial,sans-serif;padding:20px">
+            <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px;border-left:8px solid #c62828">
+                <h2 style="color:#c62828">🚨 ACİL KAPATMA GERÇEKLEŞTİ</h2>
+                <p>RAM <b>%{ram_yuzde:.1f}</b> seviyesine ulaştı.</p>
+                <p>Tüm Playwright botları otomatik durduruldu, {oldurulen} zombi temizlendi.</p>
+                <p>Scrapy devam ediyor. Dashboard'dan botları yeniden başlatabilirsiniz.</p>
+            </div></body></html>"""
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = f"🚨 NeuraNovaV ACİL KAPATMA: RAM %{ram_yuzde:.1f}"
+            msg["From"] = f"NeuraNovaV Komuta <{MAIL_SENDER}>"
+            msg["To"] = target_mail
+            msg.attach(MIMEText(html_body, "html"))
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(MAIL_SENDER, MAIL_APP_PASS)
+                server.sendmail(MAIL_SENDER, target_mail, msg.as_string())
+        except Exception as e:
+            print(f"⚠️ Acil kapatma maili gönderilemedi: {e}")
 
 print("💂‍♂️ NeuraNovaV Bot Manager (Komutan) Başlatıldı! Emirler bekleniyor...")
 
