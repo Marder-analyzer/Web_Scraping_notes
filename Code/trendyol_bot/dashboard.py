@@ -18,6 +18,37 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+def get_bot_ram_usage_mb():
+    total_rss = 0
+    for proc in psutil.process_iter(['name', 'cmdline', 'memory_info']):
+        try:
+            name = (proc.info.get('name') or "").lower()
+            cmdline = proc.info.get('cmdline') or []
+            cmd_str = " ".join(cmdline).lower()
+            
+            # Python botları (scrapy, playwright, bot_manager, streamlit/dashboard)
+            is_our_python = "python" in name and (
+                "playwright_worker.py" in cmd_str or
+                "scrapy" in cmd_str or
+                "bot_manager.py" in cmd_str or
+                "dashboard.py" in cmd_str or
+                "streamlit" in cmd_str
+            )
+            
+            # Headless Chrome (Playwright'ın açtığı)
+            is_our_chrome = ("chrome" in name or "chromium" in name) and "--headless" in cmd_str
+            
+            # MongoDB (mongod süreci)
+            is_mongo = "mongod" in name
+            
+            if is_our_python or is_our_chrome or is_mongo:
+                total_rss += proc.info['memory_info'].rss
+                
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+            
+    return total_rss / (1024 * 1024)
+
 # ─────────────────────────────────────────────
 # AYARLAR
 # ─────────────────────────────────────────────
@@ -574,12 +605,27 @@ if latest_job:
     ram = psutil.virtual_memory()
     ram_yuzde = ram.percent
     ram_renk = "🔴" if ram_yuzde > 85.0 else "🟡" if ram_yuzde > 70.0 else "🟢"
+    
+    # Sadece Projenin RAM'i
+    bot_ram_mb = get_bot_ram_usage_mb()
+    toplam_ram_mb = psutil.virtual_memory().total / (1024 * 1024)
+    bot_ram_yuzde = (bot_ram_mb / toplam_ram_mb) * 100
 
-    col1, col2 = st.columns(2)
+    # İŞTE BURASI YAN YANA GÖSTEREN KISIM (3 Kolon)
+    col1, col2, col3 = st.columns(3)
+    
     with col1:
-        st.metric(label="🕵️ Arka Planda Çalışan Aktif Botlar", value=gercek_calisan_sayisi)
+        st.metric(label="🕵️ Aktif Botlar", value=gercek_calisan_sayisi)
     with col2:
-        st.metric(label=f"{ram_renk} Sistem RAM Kullanımı", value=f"%{ram_yuzde:.1f}")
+        st.metric(label=f"{ram_renk} Sistem Toplam RAM", value=f"%{ram_yuzde:.1f}")
+    with col3:
+        st.metric(
+            label="🤖 Projenin RAM Tüketimi", 
+            value=f"{bot_ram_mb:.1f} MB",
+            delta=f"Sistemin %{bot_ram_yuzde:.1f}'i"
+        )
+        
+    st.markdown("---")
 
     # --- 2. TÜM BOTLARI ZORLA KAPAT BUTONU ---
     if st.button("🚨 TÜM BOTLARI VE SÜREÇLERİ ZORLA KAPAT (KILL ALL)", use_container_width=True):

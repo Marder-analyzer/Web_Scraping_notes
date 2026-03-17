@@ -213,8 +213,7 @@ def mod3_liste_kurtar(context, job_id):
         }).limit(5))
         
         if not bekleyenler:
-            print("\n✅ Kurtarılacak liste sayfası kalmadı. Fiyat güncellemeye geçiliyor...")
-            mod2_fiyat_guncelle(context, job_id)
+            print("\n✅ Kurtarılacak liste sayfası kalmadı.")
             break
         
         print(f"\n[MOD 3] 🔍 {len(bekleyenler)} liste sayfası kurtarılıyor...")
