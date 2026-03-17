@@ -221,18 +221,33 @@ while True:
                     cmd_list = [sys.executable, "-m", "scrapy", "crawl", "trendyol"]
                 elif bot_id == "scrapy_fiyat":
                     cmd_list = [sys.executable, "-m", "scrapy", "crawl", "fiyat_guncelle"]
-                elif bot_id in ["pw_hata", "pw_fiyat"]:
-                    gorev_adi = "hata_coz" if bot_id == "pw_hata" else "fiyat_guncelle"
+                elif bot_id in ["pw_hata", "pw_fiyat", "pw_liste"]:
+                    if bot_id == "pw_hata":
+                        gorev_adi = "hata_coz"
+                    elif bot_id == "pw_fiyat":
+                        gorev_adi = "fiyat_guncelle"
+                    elif bot_id == "pw_liste":
+                        gorev_adi = "liste_kurtar"
                     job_id = get_latest_job_id()
                     cmd_list = [sys.executable, "playwright_worker.py", "--gorev", gorev_adi]
                     if job_id:
                         cmd_list.extend(["--job_id", job_id])
                 
+                print(f"DEBUG cmd_list: {cmd_list}")
+                print(f"DEBUG log_file: {log_file}")
+                proje_yolu = os.path.dirname(os.path.abspath(__file__))
                 # Botu Başlat!
                 f = open(log_file, "a", encoding="utf-8", errors="ignore")
                 f.write(f"\n--- YENİ OTURUM: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
                 f.flush()
-                proc = subprocess.Popen(cmd_list, stdout=f, stderr=subprocess.STDOUT, text=True)
+                
+                proc = subprocess.Popen(
+                    cmd_list, 
+                    stdout=f, 
+                    stderr=subprocess.STDOUT, 
+                    text=True,
+                    cwd=proje_yolu  # <--- TAM OLARAK BURAYA BU SATIRI EKLE
+                )
                 
                 active_processes[bot_id] = proc
                 

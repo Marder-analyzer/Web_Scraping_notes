@@ -3,6 +3,8 @@ from scrapy.loader import ItemLoader
 import time
 import json
 import re
+import pymongo
+from datetime import datetime, timezone
 
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from scrapy.spidermiddlewares.httperror import HttpError
@@ -43,6 +45,10 @@ class TrendyolSpider(scrapy.Spider):
         # çekilen link sayısını ve süreyi takip etmek için değişkenler
         self.start_time = time.time()
         self.scraped_count = 0
+        self._mongo_client = pymongo.MongoClient("mongodb://localhost:27017/")
+        self._failed_col = self._mongo_client["neuranovav_db"]["failed_urls"]
+        self._datetime = datetime
+        self._timezone = timezone
         self.logger.info(f"[Spider] Basladi | kombinasyon={len(self.categories)} | limit={self.MAX_SAYFA_LIMITI}")
 
     
@@ -361,17 +367,54 @@ class TrendyolSpider(scrapy.Spider):
         # Hata türüne göre nokta atışı tespit yapıyoruz
         request_url = failure.request.url
         
+        # URL tipini belirle: liste sayfası mı, ürün sayfası mı?
+        if "pi=" in request_url:
+            sayfa_turu = "liste"
+        elif "/pd/" in request_url or "-p-" in request_url:
+            sayfa_turu = "urun"
+        else:
+            sayfa_turu = "diger"
+        
+        hata_tipi = None
+        
         if failure.check(HttpError):
             response = failure.value.response
             self.logger.error(f"[Spider] HTTP {response.status} | {request_url}")
             if response.status == 403:
                 self.logger.error("[Spider] 403 Forbidden! Ban veya Captcha.")
+                hata_tipi = "HTTP_403"
+            elif response.status == 429:
+                hata_tipi = "HTTP_429"
         elif failure.check(DNSLookupError):
             self.logger.error(f"[Spider] DNS hatasi | {request_url}")
+            hata_tipi = "DNS_Error"
         elif failure.check(TimeoutError, TCPTimedOutError, ConnectionRefusedError):
             self.logger.error(f"[Spider] Timeout | {request_url}")
+            hata_tipi = "Timeout"
         else:
             self.logger.error(f"[Spider] Bilinmeyen hata | {request_url} | {repr(failure)}")
+            hata_tipi = "UnknownError"
+        
+        # Sadece liste ve ürün sayfalarını kaydet, "diger" kaydetme
+        if hata_tipi and sayfa_turu in ("liste", "urun"):
+            try:
+                simdi = self._datetime.now(self._timezone.utc)
+                self._failed_col.update_one(
+                    {"url": request_url},
+                    {
+                        "$set": {
+                            "hata_tipi": hata_tipi,
+                            "sayfa_turu": sayfa_turu,
+                            "cozuldu": False,
+                            "son_deneme": simdi,
+                        },
+                        "$inc": {"deneme_sayisi": 1},
+                        "$setOnInsert": {"ilk_hata": simdi}
+                    },
+                    upsert=True
+                )
+            except Exception as e:
+                self.logger.warning(f"[Spider] Hata kaydedilemedi: {e}")
             
     def closed(self, reason):
         duration = time.time() - self.start_time

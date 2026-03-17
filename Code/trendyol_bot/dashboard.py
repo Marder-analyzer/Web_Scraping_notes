@@ -312,6 +312,7 @@ with st.sidebar:
         bot_configs = [
             ("ana_bot", "🕷️ 1. Ana Botu Başlat", "ana_bot.log"),
             ("pw_hata", "🚑 2. Hataları Kurtar (PW)", "pw_hata.log"),
+            ("pw_liste", "🔍 3. Liste Sayfaları Kurtar (PW)", "pw_liste.log"),
             ("scrapy_fiyat", "⚡ Hızlı Fiyat", "hizli_fiyat.log"),
             ("pw_fiyat", "🐢 Güvenilir (PW)", "pw_fiyat.log")
         ]
@@ -536,6 +537,7 @@ if latest_job:
     bot_ui_list = [
         ("ana_bot", "🕷️ Ana Bot", col_b1),
         ("pw_hata", "🚑 İtfaiye", col_b2),
+        ("pw_liste", "🔍 Liste Kurtar", col_b3),
         ("scrapy_fiyat", "⚡ Hızlı Fiyat", col_b3),
         ("pw_fiyat", "🐢 Güvenilir (PW)", col_b4)
     ]

@@ -195,13 +195,107 @@ def mod2_fiyat_guncelle(page, job_id):
                 print(f"  🔵 GÜNCELLENDİ: Fiyat -> {data['price']} TL | {data['title'][:30]}...")
             else:
                 print(f"  🟠 PAS GEÇİLDİ: {status} -> {url.split('?')[0][-30:]}")
-        update_pw_stats("fiyat_guncelle", deneme_sayisi, basarili_sayisi)
+        update_pw_stats(job_id, "fiyat_guncelle", deneme_sayisi, basarili_sayisi)
+def mod3_liste_kurtar(page, job_id):
+    """Liste sayfalarındaki (pi=) 403'lü URL'lere girer, 24 ürünü bulup kazır."""
+    update_pw_stats(job_id, "hata_coz", 0, 0)
+    
+    while True:
+        # Önce kurtarılmamış liste sayfalarını al
+        bekleyenler = list(failed_col.find({
+            "cozuldu": False,
+            "sayfa_turu": "liste"
+        }).limit(5))
+        
+        if not bekleyenler:
+            print("\n✅ Kurtarılacak liste sayfası kalmadı. Fiyat güncellemeye geçiliyor...")
+            mod2_fiyat_guncelle(page, job_id)
+            break
+        
+        print(f"\n[MOD 3] 🔍 {len(bekleyenler)} liste sayfası kurtarılıyor...")
+        simdi = datetime.now(timezone.utc)
+        today_str = simdi.strftime("%Y-%m-%d")
+        
+        basarili_sayisi = 0
+        deneme_sayisi = 0
+        
+        for item in bekleyenler:
+            liste_url = item["url"]
+            print(f"\n  📋 Liste sayfasına giriliyor: {liste_url[-60:]}")
+            
+            try:
+                page.goto(liste_url, wait_until="load", timeout=30000)
+                page.wait_for_timeout(2000)
+                
+                # Sayfadaki 24 ürün linkini topla
+                urun_linkleri = page.evaluate('''() => {
+                    let links = document.querySelectorAll("a.product-card");
+                    return Array.from(links).map(a => a.href).filter(h => h.includes("trendyol.com"));
+                }''')
+                
+                if not urun_linkleri:
+                    print(f"  ⚠️ Liste sayfasında ürün linki bulunamadı.")
+                    failed_col.update_one(
+                        {"_id": item["_id"]},
+                        {"$set": {"cozuldu": True, "son_hata_sebebi": "link_yok", "cozulme_tarihi": simdi}}
+                    )
+                    continue
+                
+                print(f"  ✅ {len(urun_linkleri)} ürün linki bulundu, kazınıyor...")
+                
+                for urun_url in urun_linkleri:
+                    deneme_sayisi += 1
+                    data, status = get_product_data_with_playwright(page, urun_url)
+                    
+                    if data and data.get("price"):
+                        products_col.update_one(
+                            {"url": urun_url},
+                            {"$set": {
+                                "title": data["title"], "category": data["category"],
+                                "images": data["images"], "explanation": data["explanation"],
+                                "attributes": data["attributes"], "last_seen": simdi,
+                                "scrape_method": "playwright"
+                            }},
+                            upsert=True
+                        )
+                        prices_col.update_one(
+                            {"url": urun_url, "date": today_str},
+                            {"$set": {
+                                "price": data["price"], "evaluation": data["evaluation"],
+                                "evaluation_len": data["evaluation_len"]
+                            }},
+                            upsert=True
+                        )
+                        # failed_urls'deki ürün hatasını da çözdü işaretle
+                        failed_col.update_one(
+                            {"url": urun_url},
+                            {"$set": {"cozuldu": True, "cozulme_tarihi": simdi}},
+                        )
+                        basarili_sayisi += 1
+                        print(f"    🟢 {data['title'][:35]}... | {data['price']} TL")
+                    else:
+                        print(f"    🔴 {status} | {urun_url[-40:]}")
+                
+                # Liste sayfasını çözüldü işaretle
+                failed_col.update_one(
+                    {"_id": item["_id"]},
+                    {"$set": {"cozuldu": True, "cozulme_tarihi": simdi}}
+                )
+                
+            except Exception as e:
+                print(f"  ❌ Liste sayfası hatası: {str(e)[:60]}")
+                failed_col.update_one(
+                    {"_id": item["_id"]},
+                    {"$inc": {"playwright_deneme": 1}, "$set": {"son_hata_sebebi": str(e)[:60]}}
+                )
+        
+        update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NeuraNovaV Playwright İşçisi")
-    parser.add_argument("--gorev", choices=['hata_coz', 'fiyat_guncelle'], required=True, 
-                        help="Hangi işlemin yapılacağını seçin (hata_coz veya fiyat_guncelle)")
+    parser.add_argument("--gorev", choices=['hata_coz', 'fiyat_guncelle', 'liste_kurtar'], required=True, 
+                        help="Hangi işlemin yapılacağını seçin")
     
-    # EKLENEN YENİ KISIM: Playwright artık job_id'yi tanıyacak
     parser.add_argument("--job_id", default=None,
                         help="İlişkilendirilecek Scrapy job_id (opsiyonel)")
     
@@ -223,6 +317,8 @@ if __name__ == "__main__":
                 mod1_kuyruk_temizle(page, args.job_id)
             elif args.gorev == 'fiyat_guncelle':
                 mod2_fiyat_guncelle(page, args.job_id)
+            elif args.gorev == 'liste_kurtar':
+                mod3_liste_kurtar(page, args.job_id)
                 
         except KeyboardInterrupt:
             print("\nKullanıcı tarafından durduruldu.")
@@ -230,5 +326,3 @@ if __name__ == "__main__":
             context.close()
             browser.close()
             print("Tarayıcı güvenle kapatıldı.")
-            
-    
