@@ -27,7 +27,7 @@ TR_PREFIXES = (
     "212.154.", "212.155.", "213.14.", "213.15.",
 )
 
-SLEEP_ON_EMPTY = 600      # Madde 7: havuz boşalınca uyku süresi (10 dk = 600 sn)
+SLEEP_ON_EMPTY = 120      # Madde 7: havuz boşalınca uyku süresi (10 dk = 600 sn)
 BAN_LIMIT       = 10    # Madde 20: kaç ban sonra retired
 MONGO_URI      = "mongodb://localhost:27017/"
 MONGO_DB       = "neuranovav_db"    # pipelines.py ile aynı
@@ -309,6 +309,19 @@ class LiveProxyUpdater:
     def _enter_sleep_mode(self):
         self._sleeping = True
         log.warning("proxy havuzu boş | direkt bağlantıya geçiliyor (kendi IP)")
+        
+        # Heartbeat at — dashboard zombie saymasın
+        try:
+            if self._db:
+                self._db["jobs"].update_one(
+                    {"status": "Running"},
+                    {"$set": {"last_ping": datetime.now(timezone.utc)}},
+                    sort=[("start_time", -1)]
+                )
+                log.info("sleep mode heartbeat atıldı.")
+        except Exception as e:
+            log.warning(f"sleep mode heartbeat atılamadı: {e}")
+
         try:
             for mw in self.crawler.engine.downloader.middleware.middlewares:
                 if mw.__class__.__name__ == "RotatingProxyMiddleware":
@@ -318,6 +331,7 @@ class LiveProxyUpdater:
                     break
         except Exception as e:
             log.warning(f"direkt geçiş başarısız | {e}")
+        
         self._send_proxy_alert()
         reactor.callLater(SLEEP_ON_EMPTY, self._trigger_update)
         
