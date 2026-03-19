@@ -69,7 +69,6 @@ class TrendyolBotPipeline:
             {"job_id": self.job_id},
             {
                 "$setOnInsert": {
-                    "status":          "Running",
                     "start_time":      self.start_time,
                     "stats":           self.stats,
                     "total_processed": 0,
@@ -78,15 +77,25 @@ class TrendyolBotPipeline:
                     "kategori_stats":  {},
                     "ozet":            {}
                 },
-                "$set": {"last_ping": datetime.now(timezone.utc)}
+                "$set": {
+                    "status":    "Running",   # ← Her resume'de Running yaz
+                    "last_ping": datetime.now(timezone.utc)
+                }
             },
             upsert=True
         )
 
-        if result.upserted_id:
-            spider.logger.info(f"[Pipeline] Yeni oturum | job_id={self.job_id}")
+        if not result.upserted_id:
+            mevcut = self.jobs_col.find_one({"job_id": self.job_id})
+            if mevcut:
+                self.islenen_toplam = mevcut.get("total_processed", 0)
+                self.stats = mevcut.get("stats", self.stats)
+                spider.logger.info(
+                    f"[Pipeline] Resume | job_id={self.job_id} | "
+                    f"onceki_toplam={self.islenen_toplam}"
+                )
         else:
-            spider.logger.info(f"[Pipeline] Resume | job_id={self.job_id} | kaldigi yerden devam")
+            spider.logger.info(f"[Pipeline] Yeni oturum | job_id={self.job_id}")
             
         # FAZ 5: Bot başladı maili
         self._send_status_mail(
