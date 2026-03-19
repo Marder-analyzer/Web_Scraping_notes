@@ -232,11 +232,21 @@ class LiveProxyUpdater:
                     from rotating_proxies.expire import ProxyState
 
                     # Madde 3: sadece yeni proxy ekle
-                    for p in ordered:
-                        if p not in mw.proxies.proxies:
-                            mw.proxies.proxies[p] = ProxyState()
+                    yeni_gelenler = [p for p in ordered if p not in mw.proxies.proxies]
+
+                    # Yeni proxy geldiyse eski "good" olanları unchecked'e at — taze proxiler önce denensin
+                    if yeni_gelenler:
+                        good_copy = list(mw.proxies.good)
+                        for p in good_copy:
+                            mw.proxies.good.discard(p)
                             mw.proxies.unchecked.add(p)
-                            added += 1
+                        log.info(f"yeni proxy geldi | {len(good_copy)} eski good → unchecked'e alındı")
+
+                    # Yeni proxileri ekle
+                    for p in yeni_gelenler:
+                        mw.proxies.proxies[p] = ProxyState()
+                        mw.proxies.unchecked.add(p)
+                        added += 1
 
                     # Madde 4: dead (banlı) proxyleri RAM'den temizle
                     dead = [
