@@ -35,10 +35,11 @@ NeuraNovaV is a production-grade e-commerce intelligence pipeline built to conti
 | Problem | Solution |
 |---|---|
 | Scrapy can't render JS-heavy dynamic prices | Playwright Workers handle complex rendering |
-| Bot dies on restart, restarts from page 1 | Scrapy `JOBDIR` resumes from exact position |
-| Headless Chrome leaks RAM and crashes server | Anti-Leak architecture with `gc.collect()` |
+| Bot dies on restart, loses progress | MongoDB unique index prevents duplicates — real progress tracked from DB |
+| Headless Chrome leaks RAM and crashes server | Dynamic RAM pay system + Anti-Leak architecture with `gc.collect()` |
 | No visibility into what's running | Streamlit Dashboard with real-time control |
 | All control via SSH terminal | MongoDB-backed command bus — control from browser |
+| Multiple bots competing for RAM | Centralized weighted RAM allocation per bot count |
 
 ---
 
@@ -49,6 +50,7 @@ NeuraNovaV is a production-grade e-commerce intelligence pipeline built to conti
 │                    🖥️  STREAMLIT DASHBOARD                       │
 │              (Command Center — browser accessible)               │
 │    [Start] [Stop] [Force Kill] [Panic] [RAM Monitor]            │
+│    [Progress from DB] [Estimated Completion] [Proxy Countdown]  │
 └─────────────────────┬───────────────────────────────────────────┘
                       │  writes commands
                       ▼
@@ -56,7 +58,8 @@ NeuraNovaV is a production-grade e-commerce intelligence pipeline built to conti
 │                    🍃  MONGODB (Docker Container)                │
 │                                                                  │
 │  bot_commands ──── jobs ──── products ──── price_history        │
-│  failed_urls  ──── proxy_performance ──── url_queue             │
+│  failed_urls  ──── proxy_performance ──── proxy_logs            │
+│  ram_shares (bot_commands) ── ram_throttle (bot_commands)       │
 └──────────┬──────────────────────────────────────────────────────┘
            │  listens & executes
            ▼
@@ -64,26 +67,30 @@ NeuraNovaV is a production-grade e-commerce intelligence pipeline built to conti
 │               🎯  BOT MANAGER (bot_manager.py)                   │
 │                  runs: nohup in background                       │
 │                                                                  │
-│  • Reads pending commands from bot_commands                      │
+│  • Reads pending commands from bot_commands every 2s            │
 │  • Launches / monitors / force-kills bots                        │
-│  • RAM Defense: kills zombie Chromes at >92%                     │
-│  • Sends email alerts (80% warning, 92% auto-shutdown)           │
+│  • recalculate_ram_shares() on every bot start/stop             │
+│  • Dynamic RAM pay system (weighted allocation)                  │
+│  • Kills zombie Chromes at system >92%                           │
+│  • Sends rich HTML email alerts with live system summary         │
 └───────────────┬──────────────────────────┬──────────────────────┘
                 │                          │
                 ▼                          ▼
 ┌───────────────────────┐    ┌─────────────────────────────────────┐
-│  🕷️  SCRAPY BOT        │    │     🎭  PLAYWRIGHT WORKERS           │
-│  (trendyol.py)        │    │     (playwright_worker.py)           │
-│                       │    │                                      │
+│  🕷️  SCRAPY BOTS       │    │     🎭  PLAYWRIGHT WORKERS           │
+│                       │    │     (playwright_worker.py)           │
+│  trendyol.py          │    │                                      │
 │  • URL Discovery      │    │  Worker 1 — İtfaiye (Firefighter)   │
-│  • Category crawler   │    │    → Fixes 403/CAPTCHA blocked URLs  │
-│  • JOBDIR resume ✅   │    │                                      │
-│  • 403 error logging  │    │  Worker 2 — Hızlı Fiyat (Fast Price)│
-│  • Proxy rotation     │    │    → Updates JS-rendered prices      │
-│                       │    │                                      │
-└───────────────────────┘    │  Worker 3 — Liste Kurtar (Recovery) │
-                             │    → Recovers full listing pages     │
-                             │    → Extracts all 24 products/page   │
+│  • 450+ categories    │    │    → Fixes 403/CAPTCHA blocked URLs  │
+│  • RAM throttle ✅    │    │    → Reads from failed_urls queue    │
+│  • 403 error logging  │    │                                      │
+│                       │    │  Worker 2 — Hızlı Fiyat (Fast Price)│
+│  fiyat_guncelle.py    │    │    → Updates Playwright-added prices │
+│  • Price-only updates │    │                                      │
+│  • RAM throttle ✅    │    │  Worker 3 — Liste Kurtar (Recovery) │
+│                       │    │    → Recovers full listing pages     │
+└───────────────────────┘    │    → Extracts all 24 products/page  │
+                             │    → RAM check before each URL ✅   │
                              └─────────────────────────────────────┘
 ```
 
@@ -100,9 +107,12 @@ The orchestration brain of the entire system. Runs continuously in the backgroun
 - Launches Scrapy and Playwright bots as subprocesses
 - Monitors running processes for crashes (exit code tracking)
 - Force-kills unresponsive processes (`force_stop`, `panic_kill` commands)
+- **Centralized RAM Pay System:** calls `recalculate_ram_shares()` on every bot start/stop
 - **RAM Defense System:** monitors system memory, auto-kills Playwright at >92%
-- Sends HTML email alerts for bot lifecycle events and RAM pressure
+- Sends rich HTML email alerts with live system summary for every bot lifecycle event
 - Survives server restarts — syncs with DB on startup to recover zombie processes
+
+**Important:** Email notifications are sent exclusively from Bot Manager. Pipeline-level mail was removed to eliminate duplicate notifications.
 
 ---
 
@@ -112,10 +122,37 @@ The high-throughput crawler responsible for discovering new products across all 
 
 **Key Features:**
 - Covers **450+ category × price-range combinations** across all Trendyol departments
-- **JOBDIR Resume System:** uses `-s JOBDIR=crawls/trendyol_state` — if stopped, resumes from exact URL on restart with **zero RAM overhead**
+- **No JOBDIR** — resume logic is handled by MongoDB `url` unique index. Duplicate prevention is at the pipeline level; progress is tracked from the real product count in DB
 - Rotating proxy middleware with ban detection and exponential backoff
-- Automatic 403 error logging to `failed_urls` with `sayfa_turu` tagging (`liste` vs `urun`)
+- Automatic error logging to `failed_urls` with `sayfa_turu` tagging (`liste` vs `urun`)
+- **RAM Throttle:** reads `scrapy_limit` from `bot_commands` every 50 requests and adjusts `concurrent` dynamically
 - Heartbeat pings to `jobs` collection every 10 items for zombie detection
+
+**RAM Throttle Logic:**
+
+```python
+# Every 50 requests:
+shares = cmd_col.find_one({"bot_id": "ram_shares"})
+scrapy_limit = shares.get("scrapy_limit", 80)
+
+if   proje_yuzde > scrapy_limit:              concurrent = 2
+elif proje_yuzde > scrapy_limit * 0.90:       concurrent = 4
+elif proje_yuzde > scrapy_limit * 0.75:       concurrent = 8
+else:                                          concurrent = 16
+```
+
+---
+
+### 💰 Price Update Bot (`fiyat_guncelle.py`)
+
+Runs independently from discovery. Never visits category pages — reads existing product URLs directly from MongoDB and updates only price and rating data.
+
+| Feature | trendyol.py | fiyat_guncelle.py |
+|---|---|---|
+| Purpose | New product discovery | Price / rating update |
+| Resource Usage | High (category traversal) | Low (direct URL hits) |
+| Data Collected | Full metadata | Price + rating only |
+| Frequency | Weekly / monthly | Daily |
 
 ---
 
@@ -125,27 +162,46 @@ Headless Chromium-based workers that handle tasks Scrapy cannot. Three operation
 
 | Mode | Command | Purpose |
 |------|---------|---------|
-| `hata_coz` | İtfaiye | Retries 403/price-missing URLs with real browser |
-| `fiyat_guncelle` | Hızlı Fiyat | Updates today's prices for known products |
+| `hata_coz` | İtfaiye | Retries 403/price-missing/timeout URLs with real browser |
+| `fiyat_guncelle` | Hızlı Fiyat | Updates prices for Playwright-added products |
 | `liste_kurtar` | Liste Kurtar | Enters blocked listing pages, extracts all 24 products |
+
+**Error Queue Filter (mod1):**
+```python
+# Playwright reads ALL normalized error types:
+{"hata_tipi": {"$in": [
+    "price_missing", "HTTP_403", "HTTP_429",
+    "CONNECTION_ERROR",   # All timeout/connection errors normalized here
+    "TCPTimedOutError", "TimeoutError"
+]}}
+```
+
+**RAM Check Before Each URL:**
+```python
+asil_limit, proje_yuzde, limit = check_playwright_ram()
+if asil_limit:
+    time.sleep(10)   # Wait 10s, let RAM drop
+    asil_limit, _, _ = check_playwright_ram()
+    if asil_limit:
+        continue     # Still high — skip this URL
+```
 
 **Anti-Memory-Leak Architecture:**
 ```python
 browser = p.chromium.launch(
     headless=True,
     args=[
-        "--disable-dev-shm-usage",    # Prevents /dev/shm crash on Linux
-        "--disk-cache-size=1",         # Disables disk cache (no thrashing)
+        "--disable-dev-shm-usage",
+        "--disk-cache-size=1",
         "--disable-disk-cache",
-        "--js-flags=--max-old-space-size=512",  # Hard RAM cap per tab
+        "--js-flags=--max-old-space-size=512",
         "--disable-gpu",
         "--no-sandbox",
     ]
 )
-# After each session:
 context.close()
 browser.close()
-gc.collect()  # Force Python GC — zero residue
+gc.collect()
 ```
 
 ---
@@ -157,11 +213,14 @@ A fully functional command-and-control interface accessible from any browser on 
 **Features:**
 - Real-time job status with zombie detection (160s heartbeat timeout)
 - Bot control buttons that write directly to MongoDB command bus
+- **Progress tracking from DB** — `products.count_documents({})` instead of job counter; never resets on bot restart
+- **Estimated completion time** — calculated from current scraping speed (days/hours remaining)
+- **Proxy countdown** — time since last update and time until next update (mm:ss)
+- **Proxy intelligence** — active / retired / total proxy counts + per-source breakdown
 - Live system RAM gauge with per-bot RAM breakdown
+- URL error tracking — resolved vs unresolved breakdown, error type distribution
 - 🚨 **Panic Button** — kills all zombie Chrome processes instantly
-- Email notification system for alerts and reports
-- Proxy performance monitoring
-- Hourly scraping speed snapshots
+- **Unified email system** — manual report sender with full system summary
 
 ---
 
@@ -171,13 +230,13 @@ A fully functional command-and-control interface accessible from any browser on 
 
 | Collection | Purpose |
 |---|---|
-| `products` | Master product catalog (url, title, category, images, attributes) |
+| `products` | Master product catalog (url, title, category, images, attributes, scrape_method) |
 | `price_history` | Daily price snapshots per product (url + date unique index) |
 | `jobs` | Scraping session tracking (status, stats, heartbeat, hourly snapshots) |
-| `bot_commands` | Command bus between Dashboard and Bot Manager |
-| `failed_urls` | Error queue for 403s, price-missing, timeouts (with `sayfa_turu` tag) |
+| `bot_commands` | Command bus + RAM pay data (ram_shares, ram_throttle, proxy_stats) |
+| `failed_urls` | Error queue — normalized error types, sayfa_turu tag, cozuldu flag |
 | `proxy_performance` | Per-proxy ban/success counters and retirement tracking |
-| `url_queue` | Resume queue for Scrapy (pending/processing/done states) |
+| `proxy_logs` | Per-source proxy fetch history (toplam, tr, yabanci, cop, yeni_eklenen) |
 
 **5-State Telemetry (per job):**
 ```
@@ -260,31 +319,33 @@ nohup streamlit run dashboard.py > logs/dashboard.log 2>&1 &
 
 # 3. Monitor logs
 tail -f logs/manager.log
+tail -f logs/ana_bot.log
 ```
 
 ### First Run — Clean Start on New Server
 
-> ⚠️ **WARNING:** If you have existing product data on the server that you want to **keep**, do **NOT** drop the database. The pipeline uses `upsert` logic — it will update existing records and add new ones without creating duplicates.
+> ⚠️ **WARNING:** If you have existing product data you want to **keep**, do **NOT** drop the database. The pipeline uses `upsert` logic — it will update existing records and add new ones without duplicates.
 
 ```bash
-# Only wipe the Scrapy resume state to force a fresh scan from Page 1
-# This does NOT touch your MongoDB data
-rm -rf crawls/
+# Fresh start — wipe all data
+python -c "
+import pymongo
+db = pymongo.MongoClient()['neuranovav_db']
+db.failed_urls.drop()
+db.proxy_performance.drop()
+db.jobs.drop()
+db.price_history.drop()
+db.products.drop()
+db.proxy_logs.drop()
+db.bot_commands.drop()
+print('Clean slate ready.')
+"
+python -c "open('proxies.txt', 'w').close()"
 ```
 
-Scrapy will begin from page 1, build a fresh `crawls/trendyol_state/` directory automatically, and use upsert to update existing records without data loss.
+### Subsequent Runs — Just Start Bot Manager
 
-> 🗑️ **Only drop the database if you are setting up on a completely empty server with zero existing data:**
-> ```bash
-> mongosh
-> use neuranovav_db
-> db.dropDatabase()  # DANGER: deletes ALL 450,000+ records — only for fresh empty servers
-> exit
-> ```
-
-### Subsequent Runs — Resume from Checkpoint
-
-No action needed. The Bot Manager detects the `crawls/trendyol_state/` directory and Scrapy automatically resumes from the last processed URL.
+No action needed. Progress is tracked from the actual product count in MongoDB — not from any file-based state. The Bot Manager detects already-running processes via `sync_with_db()` on startup.
 
 ---
 
@@ -294,22 +355,65 @@ The system is designed to survive unexpected shutdowns at every layer:
 
 | Layer | Mechanism | Recovery |
 |---|---|---|
-| Scrapy | `JOBDIR=crawls/trendyol_state` | Resumes from last URL on restart |
-| Playwright Workers | MongoDB `cozuldu: False` queue | Retries all unresolved errors |
+| Scrapy | MongoDB `url` unique index | Same URL processed twice → upsert, no duplicate |
+| Progress Tracking | `products.count_documents({})` | Dashboard never resets on bot restart |
+| Playwright Workers | MongoDB `cozuldu: False` queue | Retries all unresolved errors on next run |
 | Bot Manager | `sync_with_db()` on startup | Recovers zombie PIDs from DB |
 | Dashboard | MongoDB state | Always reflects true system state |
+
+**Note:** JOBDIR was removed in the current version. The file-based resume mechanism caused unnecessary disk I/O and RAM pressure (loading all URL hashes on startup). MongoDB unique index provides the same duplicate-prevention guarantee at the pipeline level with zero overhead.
 
 ---
 
 ## 🛡️ RAM Defense System
 
-The system monitors RAM usage in real-time and responds automatically:
+The system uses a **three-layer** RAM defense strategy:
+
+### Layer 1 — Centralized Pay System (`recalculate_ram_shares`)
+
+Triggered on every bot start/stop. Writes weighted allocations to MongoDB:
+
+| Bot | Weight | Reason |
+|---|---|---|
+| ana_bot | 1x | Scrapy — CPU-heavy, RAM-light |
+| scrapy_fiyat | 1x | Scrapy — direct URL hits |
+| pw_hata | 2x | Playwright — Chrome instance |
+| pw_fiyat | 2x | Playwright — Chrome instance |
+| pw_liste | 2x | Playwright — Chrome instance |
+
+**Allocation rules:**
+- **1 bot running** → full access up to 88% system RAM, no limits
+- **Multiple bots** → 78% shared pool (88% minus 10% fixed for MongoDB/dashboard) split by weight
+- **Bot stops** → shares automatically recalculated, remaining bots get more
+
+### Layer 2 — Per-Bot RAM Throttle
+
+**Scrapy bots** (every 50 requests):
+```
+RAM < limit × 75%  → concurrent = 16  (full speed)
+RAM < limit × 90%  → concurrent = 8
+RAM < limit × 100% → concurrent = 4
+RAM > limit        → concurrent = 2   (minimum)
+```
+
+**Playwright bots** (before every URL):
+```
+RAM < limit × 90%  → proceed normally
+RAM < limit        → log warning, proceed
+RAM > limit        → sleep 10s → recheck → skip if still high
+```
+
+### Layer 3 — System-Level Safety Shutdown
 
 ```
-RAM < 80%   → Normal operation
-RAM > 80%   → Warning email sent (max once per hour)
-RAM > 92%   → AUTO-SHUTDOWN: all Playwright bots killed, zombies cleared,
-               WSL shutdown (Windows) / drop_caches (Linux), report email sent
+System RAM < 80%  → Normal operation
+System RAM > 80%  → Warning email (max once per hour)
+System RAM > 92%  → AUTO-SHUTDOWN:
+                    • All Playwright bots killed
+                    • Zombie Chrome processes cleared
+                    • Python GC forced
+                    • WSL shutdown (Windows) / drop_caches (Linux)
+                    • Report email sent
 ```
 
 **Panic Button** (Dashboard): Manually triggers the same cleanup sequence on demand.
@@ -323,27 +427,29 @@ trendyol_bot/
 ├── bot_manager.py          # Orchestrator — the brain
 ├── dashboard.py            # Streamlit command center
 ├── playwright_worker.py    # Playwright workers (3 modes)
-├── crawls/
-│   └── trendyol_state/     # Scrapy JOBDIR resume checkpoint
+├── proxies.txt             # Active proxy list (auto-managed by LiveProxyUpdater)
 ├── logs/
 │   ├── ana_bot.log
+│   ├── pw_hata.log
 │   ├── pw_liste.log
+│   ├── pw_fiyat.log
 │   └── manager.log
 ├── trendyol_bot/
 │   ├── spiders/
-│   │   ├── trendyol.py     # Main discovery spider
-│   │   ├── fiyat_guncelle.py
-│   │   ├── kategoriler.py
-│   │   └── fiyatlar.py
-│   ├── pipelines.py        # MongoDB write pipeline
+│   │   ├── trendyol.py         # Main discovery spider
+│   │   ├── fiyat_guncelle.py   # Price update spider
+│   │   ├── kategoriler.py      # Category definitions
+│   │   └── fiyatlar.py         # Price range definitions
+│   ├── pipelines.py            # MongoDB write pipeline
+│   ├── extensions.py           # LiveProxyUpdater
+│   ├── middlewares.py          # RandomUserAgentMiddleware
 │   ├── items.py
-│   ├── extensions.py       # LiveProxyUpdater
-│   └── middlewares.py
+│   └── settings.py
 ├── tests/
 │   ├── test_pipeline.py
 │   ├── test_spider.py
 │   └── test_temizleyiciler.py
-└── .env                    # Gmail credentials (not committed)
+└── .env                        # Gmail credentials (not committed)
 ```
 
 ---
