@@ -11,9 +11,7 @@ log = logging.getLogger("proxy_updater")
 # ── Madde 2: Çoklu kaynak ─────────────────────────────────────────────────────
 PROXY_SOURCES = [
     "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
     "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt",
 ]
 
 # Madde 6: Yaygın Türk ISP IP bloklarının önekleri (kaba TR filtresi)
@@ -27,7 +25,6 @@ TR_PREFIXES = (
     "212.154.", "212.155.", "213.14.", "213.15.",
 )
 
-SLEEP_ON_EMPTY = 120      # Madde 7: havuz boşalınca uyku süresi (10 dk = 600 sn)
 BAN_LIMIT       = 10    # Madde 20: kaç ban sonra retired
 MONGO_URI      = "mongodb://localhost:27017/"
 MONGO_DB       = "neuranovav_db"    # pipelines.py ile aynı
@@ -341,7 +338,7 @@ class LiveProxyUpdater:
             log.warning(f"direkt geçiş başarısız | {e}")
         
         self._send_proxy_alert()
-        reactor.callLater(SLEEP_ON_EMPTY, self._trigger_update)
+        self._trigger_update()
         
     def response_received(self, response, request, spider):
         # Sadece kendi IP'mizdeysek ve bot uykuda değilse kontrol et
@@ -370,6 +367,16 @@ class LiveProxyUpdater:
             log.warning(f"DB Pause güncelleme hatası: {e}")
         
     def _check_proxy_health(self):
+        try:
+            if self._db:
+                self._db["jobs"].update_one(
+                    {"status": "Running"},
+                    {"$set": {"last_ping": datetime.now(timezone.utc)}},
+                    sort=[("start_time", -1)]
+                )
+        except Exception as e:
+            log.warning(f"health heartbeat hatası: {e}")
+
         if self._sleeping:
             return
         try:
@@ -450,7 +457,7 @@ class LiveProxyUpdater:
                 "tr":          attempt.get("tr", 0),
                 "yabanci":     attempt.get("yabanci", 0),
                 "cop":         attempt.get("cop", 0),
-                "yeni_eklenen": result.get("yeni_eklenen", 0),  # enjeksiyon sonrası güncellenir
+                "yeni_eklenen": attempt.get("toplam", 0),  # her kaynak kendi toplamını yazar
                 "hata":        attempt.get("hata", None),
             })
 
@@ -516,11 +523,15 @@ class LiveProxyUpdater:
             proxy = request.meta.get("proxy")
             if proxy:
                 self._record_ban(proxy)
-                
-            # SADECE ÜRÜN SAYFASIYSA İTFAİYEYE HABER VER
-            if "/pd/" in response.url or "-p-" in response.url:
-                error_type = f"HTTP_{response.status}"
-                self._record_url_error(response.url, proxy or "Direct", error_type)
+
+            # SADECE son denemede failed_urls'e yaz — retry'leri sayma
+            retry_times = request.meta.get("retry_times", 0)
+            max_retry = self.crawler.settings.getint("RETRY_TIMES", 5)
+
+            if retry_times >= max_retry:
+                if "/pd/" in response.url or "-p-" in response.url:
+                    error_type = f"HTTP_{response.status}"
+                    self._record_url_error(response.url, proxy or "Direct", error_type)
 
     def handle_failure(self, failure, spider):
         """FAZ 5+6: Timeout/bağlantı hatalarını yakalar, proxy banlar + URL hata kaydı."""
@@ -531,7 +542,8 @@ class LiveProxyUpdater:
             
         # SADECE ÜRÜN SAYFASIYSA İTFAİYEYE HABER VER
         if "/pd/" in request.url or "-p-" in request.url:
-            error_type = failure.type.__name__ if failure.type else "UnknownError"
+            # Tüm bağlantı/timeout hatalarını Playwright'ın okuyacağı tek tipe normalize et
+            error_type = "CONNECTION_ERROR"
             self._record_url_error(request.url, proxy or "Direct", error_type)
         
     def _record_url_error(self, url: str, proxy: str, error_type: str):

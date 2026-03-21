@@ -127,7 +127,15 @@ def mod1_kuyruk_temizle(context,job_id):
     while True:
         bekleyenler = list(failed_col.find({
             "cozuldu": False, 
-            "hata_tipi": {"$in": ["price_missing", "HTTP_403", "HTTP_429"]}
+            "hata_tipi": {"$in": [
+                "price_missing", 
+                "HTTP_403", 
+                "HTTP_429",
+                "CONNECTION_ERROR",
+                "TCPTimedOutError",
+                "ConnectionRefusedError",
+                "TimeoutError"
+            ]}
         }).limit(10))
         
         if not bekleyenler:

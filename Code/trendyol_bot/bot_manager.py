@@ -363,7 +363,7 @@ while True:
                 log_file = os.path.join("logs", f"{bot_id}.log")
                 
                 if bot_id == "ana_bot":
-                    cmd_list = [sys.executable, "-m", "scrapy", "crawl", "trendyol", "-s", "JOBDIR=crawls/trendyol_state"]
+                    cmd_list = [sys.executable, "-m", "scrapy", "crawl", "trendyol"]
                 elif bot_id == "scrapy_fiyat":
                     cmd_list = [sys.executable, "-m", "scrapy", "crawl", "fiyat_guncelle"]
                 elif bot_id in ["pw_hata", "pw_fiyat", "pw_liste"]:

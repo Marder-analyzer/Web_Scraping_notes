@@ -919,6 +919,26 @@ if latest_job:
     # ── FAZ 5: PROXY İSTİHBARAT MERKEZİ ──
     st.subheader("🛡️ Proxy İstihbarat Merkezi")
 
+    try:
+        son_log = db["proxy_logs"].find_one(sort=[("ts", -1)])
+        if son_log:
+            son_guncelleme = son_log.get("ts")
+            if son_guncelleme:
+                gecen_sn = (datetime.now(timezone.utc) - son_guncelleme.replace(tzinfo=timezone.utc)).total_seconds()
+                interval = 3600  # extensions.py'daki interval ile aynı
+                kalan_sn = max(0, interval - gecen_sn)
+                kalan_dk = int(kalan_sn // 60)
+                kalan_s  = int(kalan_sn % 60)
+                gecen_dk = int(gecen_sn // 60)
+
+                st.info(
+                    f"🕐 Son proxy güncellemesi: **{gecen_dk} dk önce** | "
+                    f"⏳ Sonraki güncelleme: **{kalan_dk} dk {kalan_s:02d} sn** sonra"
+                )
+    except Exception as e:
+        pass
+
+    
     p1, p2 = st.columns(2)
 
     with p1:
@@ -1042,6 +1062,8 @@ if latest_job:
 
             if top_urls:
                 df_urls = pd.DataFrame(top_urls)
+                if "proxy_listesi" not in df_urls.columns:
+                    df_urls["proxy_listesi"] = None
                 df_urls["proxy_sayisi"] = df_urls["proxy_listesi"].apply(
                     lambda x: len(x) if isinstance(x, list) else 0
                 )
