@@ -49,6 +49,7 @@ class TrendyolSpider(scrapy.Spider):
         self._failed_col = self._mongo_client["neuranovav_db"]["failed_urls"]
         self._cmd_col = self._mongo_client["neuranovav_db"]["bot_commands"]  
         self._throttle_sayac = 0  
+        self._ram_sayac = 0
         self._datetime = datetime
         self._timezone = timezone
         
@@ -127,14 +128,36 @@ class TrendyolSpider(scrapy.Spider):
     # bütün linkleri çekme işlemi ve dağıtma işlemini yaptığımız yer.
     def parse(self, response):
         
-        # ── RAM THROTTLE ──
         self._throttle_sayac += 1
         if self._throttle_sayac % 50 == 0:
             try:
-                throttle = self._cmd_col.find_one({"bot_id": "ram_throttle"})
-                if throttle:
-                    hedef = throttle.get("concurrent", 16)
-                    self.crawler.engine.slot.concurrency = hedef
+                # Önce pay limitini oku
+                shares = self._cmd_col.find_one({"bot_id": "ram_shares"})
+                scrapy_limit = shares.get("scrapy_limit", 80) if shares else 80
+
+                # Mevcut proje RAM yüzdesini hesapla
+                sanal = __import__('psutil').virtual_memory()
+                proje_ram = 0
+                for proc in __import__('psutil').process_iter(['name', 'cmdline', 'memory_info']):
+                    try:
+                        name = (proc.info.get('name') or "").lower()
+                        cmd  = " ".join(proc.info.get('cmdline') or []).lower()
+                        if ("python" in name and any(x in cmd for x in ["scrapy","bot_manager","playwright","streamlit"])) or \
+                        (("chrome" in name or "chromium" in name) and "--headless" in cmd) or \
+                        "mongod" in name:
+                            proje_ram += proc.info['memory_info'].rss
+                    except: pass
+
+                proje_yuzde = (proje_ram / sanal.total) * 100
+
+                # Limite göre concurrent ayarla
+                if   proje_yuzde > scrapy_limit:              hedef = 2
+                elif proje_yuzde > scrapy_limit * 0.90:       hedef = 4
+                elif proje_yuzde > scrapy_limit * 0.75:       hedef = 8
+                else:                                          hedef = 16
+
+                self.crawler.engine.slot.concurrency = hedef
+
             except:
                 pass
         

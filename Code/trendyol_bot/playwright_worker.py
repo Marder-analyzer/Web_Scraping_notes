@@ -22,6 +22,48 @@ failed_col = db["failed_urls"]
 products_col = db["products"]
 prices_col = db["price_history"]
 
+cmd_col_pw = db["bot_commands"]
+
+def get_playwright_limit():
+    """DB'den Playwright RAM limitini okur."""
+    try:
+        shares = cmd_col_pw.find_one({"bot_id": "ram_shares"})
+        return shares.get("playwright_limit", 80) if shares else 80
+    except:
+        return 80
+
+def check_playwright_ram():
+    """
+    Mevcut proje RAM yüzdesini hesaplar.
+    Limit aşılıyorsa True döner (dur sinyali).
+    """
+    try:
+        import psutil
+        limit = get_playwright_limit()
+        sanal = psutil.virtual_memory()
+        proje_ram = 0
+        for proc in psutil.process_iter(['name', 'cmdline', 'memory_info']):
+            try:
+                name = (proc.info.get('name') or "").lower()
+                cmd  = " ".join(proc.info.get('cmdline') or []).lower()
+                if ("python" in name and any(x in cmd for x in ["scrapy","bot_manager","playwright","streamlit"])) or \
+                   (("chrome" in name or "chromium" in name) and "--headless" in cmd) or \
+                   "mongod" in name:
+                    proje_ram += proc.info['memory_info'].rss
+            except: pass
+
+        proje_yuzde = (proje_ram / sanal.total) * 100
+
+        if proje_yuzde > limit:
+            print(f"⛔ RAM LİMİT AŞILDI: %{proje_yuzde:.1f} > %{limit} | Playwright yavaşlıyor...")
+            return True, proje_yuzde, limit
+        elif proje_yuzde > limit * 0.90:
+            print(f"⚠️ RAM UYARI: %{proje_yuzde:.1f} → limit yaklaşıyor (%{limit})")
+            return False, proje_yuzde, limit
+        return False, proje_yuzde, limit
+    except:
+        return False, 0, 80
+
 def update_pw_stats(job_id,gorev_adi, denenen, basarili):
     
     if not job_id:
@@ -150,6 +192,16 @@ def mod1_kuyruk_temizle(context,job_id):
         deneme_sayisi = len(bekleyenler) 
         
         for item in bekleyenler:
+            # ── RAM KONTROL ──
+            asil_limit, proje_yuzde, limit = check_playwright_ram()
+            if asil_limit:
+                import time
+                time.sleep(10)  # 10 sn bekle, RAM düşsün
+                asil_limit, proje_yuzde, limit = check_playwright_ram()
+                if asil_limit:
+                    print(f"⛔ RAM hala yüksek (%{proje_yuzde:.1f}), bu tur atlanıyor...")
+                    continue
+            # ── RAM KONTROL SONU ──
             url = item["url"]
             data, status = get_product_data_with_playwright(context, url)
             

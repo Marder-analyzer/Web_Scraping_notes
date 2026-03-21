@@ -312,7 +312,85 @@ def sync_with_db():
 # Döngüden önce mutlaka çalıştır
 sync_with_db()
 
+# ── MERKEZİ RAM PAY HESAPLAMA ──
+BOT_AGIRLIKLARI = {
+    "ana_bot":      1,  # Scrapy
+    "scrapy_fiyat": 1,  # Scrapy
+    "pw_hata":      2,  # Playwright
+    "pw_fiyat":     2,  # Playwright
+    "pw_liste":     2,  # Playwright
+}
 
+def recalculate_ram_shares():
+    """Aktif bot sayısına göre RAM paylarını hesaplar ve DB'ye yazar."""
+    try:
+        # Aktif botları bul
+        aktif = [b for b in BOT_AGIRLIKLARI.keys() 
+                 if b in active_processes and (
+                     hasattr(active_processes[b], 'poll') and active_processes[b].poll() is None
+                     or isinstance(active_processes[b], int) and psutil.pid_exists(active_processes[b])
+                 )]
+
+        # Sistem RAM bilgisi
+        sanal        = psutil.virtual_memory()
+        sistem_yuzde = sanal.percent
+        kullanilabilir = 88  # Sistemin max %88'i kullanılabilir
+
+        if len(aktif) == 0:
+            # Bot yok — varsayılan
+            cmd_col.update_one(
+                {"bot_id": "ram_shares"},
+                {"$set": {
+                    "aktif_botlar": [],
+                    "scrapy_limit": 80,
+                    "playwright_limit": 80,
+                    "updated_at": datetime.now(timezone.utc)
+                }},
+                upsert=True
+            )
+            return
+
+        if len(aktif) == 1:
+            # Tek bot — serbest, sadece sistem limiti
+            cmd_col.update_one(
+                {"bot_id": "ram_shares"},
+                {"$set": {
+                    "aktif_botlar":     aktif,
+                    "scrapy_limit":     kullanilabilir,
+                    "playwright_limit": kullanilabilir,
+                    "updated_at":       datetime.now(timezone.utc)
+                }},
+                upsert=True
+            )
+            print(f"📊 RAM Pay: Tek bot ({aktif[0]}) → serbest (%{kullanilabilir})")
+            return
+
+        # Birden fazla bot — ağırlıklı dağıtım
+        # MongoDB + dashboard için %10 sabit ayır
+        paylasılacak = kullanilabilir - 10
+
+        toplam_agirlik = sum(BOT_AGIRLIKLARI.get(b, 1) for b in aktif)
+
+        scrapy_agirligi     = sum(BOT_AGIRLIKLARI[b] for b in aktif if BOT_AGIRLIKLARI.get(b) == 1)
+        playwright_agirligi = sum(BOT_AGIRLIKLARI[b] for b in aktif if BOT_AGIRLIKLARI.get(b) == 2)
+
+        scrapy_limit     = round((scrapy_agirligi / toplam_agirlik) * paylasılacak) if scrapy_agirligi > 0 else 0
+        playwright_limit = round((playwright_agirligi / toplam_agirlik) * paylasılacak) if playwright_agirligi > 0 else 0
+
+        cmd_col.update_one(
+            {"bot_id": "ram_shares"},
+            {"$set": {
+                "aktif_botlar":     aktif,
+                "scrapy_limit":     scrapy_limit,
+                "playwright_limit": playwright_limit,
+                "updated_at":       datetime.now(timezone.utc)
+            }},
+            upsert=True
+        )
+        print(f"📊 RAM Pay: {aktif} → Scrapy:%{scrapy_limit} | Playwright:%{playwright_limit}")
+
+    except Exception as e:
+        print(f"⚠️ RAM pay hesaplama hatası: {e}")
 
 def kill_process_tree(pid):
     """Verilen PID ve ona bağlı tüm alt süreçleri (Chrome sekmeleri dahil) acımasızca öldürür."""
@@ -474,6 +552,7 @@ while True:
                 )
                 print(f"🚀 {bot_id} başarıyla sahaya sürüldü! (PID: {proc.pid})")
                 notify_bot_status(bot_id, is_start=True)
+                recalculate_ram_shares()
                 
             elif action == "stop":
                 # Botu durdur
@@ -505,6 +584,7 @@ while True:
                 
                 close_active_jobs_in_db(bot_id, manual_stop=True)
                 notify_bot_status(bot_id, is_start=False, exit_code="Bilinmiyor")
+                recalculate_ram_shares()
 
         # 2. ÇALIŞAN BOTLARIN SAĞLIK KONTROLÜ (Kendi kendine kapanmış mı?)
         for b_id, p in list(active_processes.items()):
@@ -548,7 +628,8 @@ while True:
                 # Eğer kayıt bulunduysa (yani ilk kez kapanıyorsa) mail at
                 if eski_kayit:
                     notify_bot_status(b_id, is_start=False, exit_code=exit_code)
-                    close_active_jobs_in_db(b_id, manual_stop=False) # Dashboard'u 2 dakika takılmaktan kurtarır
+                    close_active_jobs_in_db(b_id, manual_stop=False) 
+                    recalculate_ram_shares()
                 
                 if b_id in active_processes:
                     del active_processes[b_id]
