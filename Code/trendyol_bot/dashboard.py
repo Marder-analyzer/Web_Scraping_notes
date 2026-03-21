@@ -552,13 +552,34 @@ if latest_job:
     st.subheader(f"Durum: {status_text}")
     # === İLERLEME ÇUBUĞU (PROGRESS BAR) ===
     total_target = latest_job.get("total_target_urls", 0)
-    total_proc = latest_job.get("total_processed", 0)
+    total_proc = db.products.count_documents({})
     
     if total_target > 0:
         # Yüzdeyi hesapla (Maksimum %100 olsun diye min kullandık)
         yuzde = min(100, int((total_proc / total_target) * 100))
         # Streamlit progress bar 0.0 ile 1.0 arası değer alır
         st.progress(yuzde / 100.0, text=f"🚀 Tarama İlerlemesi: %{yuzde} ({total_proc:,} / {total_target:,} Tahmini Ürün)")
+        try:
+            start_time = latest_job.get("start_time")
+            if start_time and total_proc > 0 and total_target > total_proc:
+                gecen_sn = (datetime.now(timezone.utc) - start_time.replace(tzinfo=timezone.utc)).total_seconds()
+                hiz = total_proc / gecen_sn  # ürün/saniye
+                kalan_urun = total_target - total_proc
+                kalan_sn = kalan_urun / hiz
+                kalan_gun = int(kalan_sn // 86400)
+                kalan_saat = int((kalan_sn % 86400) // 3600)
+                kalan_dk = int((kalan_sn % 3600) // 60)
+
+                if kalan_gun > 0:
+                    sure_str = f"{kalan_gun} gün {kalan_saat} saat"
+                elif kalan_saat > 0:
+                    sure_str = f"{kalan_saat} saat {kalan_dk} dk"
+                else:
+                    sure_str = f"{kalan_dk} dakika"
+
+                st.caption(f"⏱️ Mevcut hızda tahmini bitiş: **{sure_str}** sonra")
+        except:
+            pass
     else:
         # Hedef henüz hesaplanmadıysa ufak bir bilgi ver
         st.info("🔄 Tarama hedefi hesaplanıyor...")
