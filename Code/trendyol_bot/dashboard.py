@@ -970,6 +970,12 @@ if latest_job:
             ).sort("ts", -1).limit(5))
             
             if son_loglar:
+                # Toplam özet satırı
+                toplam_proxy = sum(k.get('toplam') or 0 for k in son_loglar)
+                toplam_yeni  = sum(k.get('yeni_eklenen') or 0 for k in son_loglar)
+                toplam_cop   = sum(k.get('cop') or 0 for k in son_loglar)
+                st.markdown(f"📊 **Son tur toplamı:** {toplam_proxy} proxy | +{toplam_yeni} yeni | 🗑️ {toplam_cop} çöp")
+                st.markdown("---")
                 for k in son_loglar:
                     ts = k.get("ts")
                     if ts:
