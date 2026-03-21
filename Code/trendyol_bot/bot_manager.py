@@ -366,8 +366,6 @@ while True:
                     if job_id:
                         cmd_list.extend(["--job_id", job_id])
                 
-                print(f"DEBUG cmd_list: {cmd_list}")
-                print(f"DEBUG log_file: {log_file}")
                 proje_yolu = os.path.dirname(os.path.abspath(__file__))
                 # Botu Başlat!
                 f = open(log_file, "a", encoding="utf-8", errors="ignore")
