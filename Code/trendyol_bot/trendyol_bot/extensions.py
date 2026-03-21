@@ -130,24 +130,20 @@ class LiveProxyUpdater:
     # ─────────────────────────────────────────────────────────────────────────
 
     def _fetch_proxies(self) -> dict:
-        """
-        Scrapy nesnelerine kesinlikle dokunmaz.
-        Dönüş: {all, tr, foreign, source, trash, source_reachable}
-        """
         result = {
             "all": [], "tr": [], "foreign": [],
             "source": None, "trash": 0, "source_reachable": False, "source_attempts": []
         }
+        tum_proxies = set()  # Aynı proxy'yi iki kere eklememek için kalkan
 
         for url in PROXY_SOURCES:
             source_name = url.split("/")[3]
-            attempt     = {"kaynak": source_name, "erisim_ok": False,
-                           "toplam": 0, "tr": 0, "yabanci": 0, "cop": 0}
+            attempt = {"kaynak": source_name, "erisim_ok": False,
+                       "toplam": 0, "tr": 0, "yabanci": 0, "cop": 0}
             try:
                 req  = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
                 resp = urllib.request.urlopen(req, timeout=10)
                 data = resp.read().decode("utf-8")
-                
 
                 proxies = []
                 trash   = 0
@@ -157,12 +153,16 @@ class LiveProxyUpdater:
                         continue
                     parts = line.split(":")
                     if len(parts) == 2 and parts[1].isdigit():
-                        proxies.append(f"http://{line}")
+                        p = f"http://{line}"
+                        if p not in tum_proxies:  # Sadece daha önce eklenmemişse listeye al
+                            proxies.append(p)
+                            tum_proxies.add(p)
                     else:
                         trash += 1
-                        
-                tr_list      = [p for p in proxies if _is_tr(p)]
-                foreign_list = [p for p in proxies if not _is_tr(p)]
+
+                # _is_tr fonksiyonunun dosyanda var olduğunu varsayıyoruz
+                tr_list      = [p for p in proxies if getattr(self, '_is_tr', lambda x: False)(p)]
+                foreign_list = [p for p in proxies if p not in tr_list]
 
                 attempt.update({
                     "erisim_ok": True,
@@ -171,30 +171,28 @@ class LiveProxyUpdater:
                     "yabanci":   len(foreign_list),
                     "cop":       trash,
                 })
-                result["source_attempts"].append(attempt)
 
-                if proxies:
-                    result.update({
-                        "all":              proxies,
-                        "tr":               tr_list,
-                        "foreign":          foreign_list,
-                        "source":           source_name,
-                        "trash":            trash,
-                        "source_reachable": True,
-                    })
-                    log.info(
-                        f"kaynak OK | {source_name} | "
-                        f"toplam: {len(proxies)} | TR: {len(tr_list)} | "
-                        f"yabancı: {len(foreign_list)} | çöp: {trash}"
-                    )
-                    return result
-
+                result["all"].extend(proxies)
+                result["tr"].extend(tr_list)
+                result["foreign"].extend(foreign_list)
+                result["trash"] += trash
+                result["source_reachable"] = True
+                
+                if result["source"] is None:
+                    result["source"] = source_name
+                    
+                log.info(
+                    f"Kaynak OK | {source_name} | "
+                    f"Toplam: {len(proxies)} | TR: {len(tr_list)} | "
+                    f"Yabancı: {len(foreign_list)} | Çöp: {trash}"
+                )
             except Exception as e:
                 attempt["hata"] = str(e)
-                result["source_attempts"].append(attempt)
-                log.warning(f"kaynak başarısız | {source_name} | {e}")
-
-        log.error("tüm proxy kaynakları erişilemez!")
+                log.warning(f"Kaynak başarısız | {source_name} | {e}")
+                
+            result["source_attempts"].append(attempt)
+            
+        # DÖNGÜ BİTTİKTEN SONRA (Tüm siteler gezildikten sonra) dön!
         return result
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -372,7 +370,6 @@ class LiveProxyUpdater:
             log.warning(f"DB Pause güncelleme hatası: {e}")
         
     def _check_proxy_health(self):
-        """Her 2 dakikada bir: tüm proxiler dead ise direkt bağlantıya geç."""
         if self._sleeping:
             return
         try:
@@ -380,14 +377,14 @@ class LiveProxyUpdater:
                 if mw.__class__.__name__ == "RotatingProxyMiddleware":
                     good = len(mw.proxies.good)
                     unchecked = len(mw.proxies.unchecked)
-                    reanimated = len(mw.proxies.reanimated)
-                    if good == 0:
-
-                        log.warning("proxy sağlık kontrolü: tüm proxiler dead | direkt geçiş")
+                    
+                    # YENİ MANTIK: Hem "iyi" hem de "test edilecek (unchecked)" proxy bittiyse uyu!
+                    if good == 0 and unchecked == 0:  
+                        log.warning(f"Proxy havuzu tamamen tükendi (good=0, unchecked=0) | Direkt geçiş")
                         self._enter_sleep_mode()
                     break
         except Exception as e:
-            log.warning(f"proxy sağlık kontrolü hatası | {e}")
+            log.warning(f"Proxy sağlık kontrolü hatası | {e}")
 
     def _send_proxy_alert(self):
         """Tüm proxy kaynakları erişilemezse dashboard'daki default mail'e bildirim atar."""
@@ -569,19 +566,4 @@ class LiveProxyUpdater:
         except Exception as e:
             log.warning(f"URL hata kaydı yazılamadı | {e}")
             
-    def _check_proxy_health(self):
-        """Her 2 dakikada bir: tüm proxiler dead ise direkt bağlantıya geç."""
-        if self._sleeping:
-            return
-        try:
-            for mw in self.crawler.engine.downloader.middleware.middlewares:
-                if mw.__class__.__name__ == "RotatingProxyMiddleware":
-                    good = len(mw.proxies.good)
-                    unchecked = len(mw.proxies.unchecked)
-                    reanimated = len(mw.proxies.reanimated)
-                    if good == 0 and unchecked == 0 and reanimated == 0:
-                        log.warning("proxy sağlık kontrolü: tüm proxiler dead | direkt geçiş")
-                        self._enter_sleep_mode()
-                    break
-        except Exception as e:
-            log.warning(f"proxy sağlık kontrolü hatası | {e}")
+  
