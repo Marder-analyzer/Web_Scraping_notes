@@ -90,6 +90,8 @@ class TrendyolBotPipeline:
             if mevcut:
                 self.islenen_toplam = mevcut.get("total_processed", 0)
                 self.stats = mevcut.get("stats", self.stats)
+                self.hourly_snapshots = mevcut.get("hourly_stats", []) 
+                self.kategori_sayac = mevcut.get("kategori_stats", {})
                 spider.logger.info(
                     f"[Pipeline] Resume | job_id={self.job_id} | "
                     f"onceki_toplam={self.islenen_toplam}"
@@ -289,7 +291,8 @@ class TrendyolBotPipeline:
 
         # Son saatin snapshot'i
         if self.saat_basi_sayac > 0:
-            hiz = round(self.saat_basi_sayac / max(duration / 60, 1), 1)
+            son_oturum_dk = max(min(duration / 60, 60), 1)
+            hiz = round(self.saat_basi_sayac / son_oturum_dk, 1)
             snapshot = {
                 "saat":        f"{self.mevcut_saat:02d}:00 (son)",
                 "islenen":     self.saat_basi_sayac,
