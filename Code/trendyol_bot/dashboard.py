@@ -956,6 +956,20 @@ if latest_job:
                     f"🕐 Son proxy güncellemesi: **{gecen_dk} dk önce** | "
                     f"⏳ Sonraki güncelleme: **{kalan_dk} dk {kalan_s:02d} sn** sonra"
                 )
+                try:
+                    toplam_proxy  = db["proxy_performance"].count_documents({})
+                    emekli_proxy  = db["proxy_performance"].count_documents({"retired": True})
+                    aktif_proxy   = toplam_proxy - emekli_proxy
+
+                    # Scrapy'deki anlık good sayısını bot_commands'dan oku
+                    throttle = db["bot_commands"].find_one({"bot_id": "ram_throttle"})
+
+                    pc1, pc2, pc3 = st.columns(3)
+                    pc1.metric("✅ Aktif Proxy",  f"{aktif_proxy}")
+                    pc2.metric("🚫 Emekli Proxy", f"{emekli_proxy}")
+                    pc3.metric("📦 Toplam Havuz", f"{toplam_proxy}")
+                except:
+                    pass
     except Exception as e:
         pass
 
