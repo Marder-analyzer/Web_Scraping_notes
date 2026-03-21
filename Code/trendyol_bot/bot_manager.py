@@ -86,19 +86,31 @@ def notify_bot_status(bot_id, is_start=True, exit_code=None):
 
 
 def slaughter_zombies():
-    """Görünmez (Headless) Chrome'ları ve asılı kalan Playwright işçilerini acımasızca katleder."""
+    """Zombi süreçleri, headless Chrome'ları ve asılı kalan Playwright işçilerini temizler."""
     killed_count = 0
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'status']):
         try:
             name = (proc.info.get('name') or "").lower()
             cmdline = proc.info.get('cmdline') or []
             cmd_str = " ".join(cmdline).lower()
+            status = proc.info.get('status', "")
 
+            # Zombi süreçleri temizle (<defunct>)
+            if status == psutil.STATUS_ZOMBIE:
+                try:
+                    proc.wait(timeout=1)
+                    killed_count += 1
+                except Exception:
+                    pass
+                continue
+
+            # Headless Chrome ve Playwright worker temizle
             if (('chrome' in name or 'chromium' in name) and '--headless' in cmd_str) or \
                ('python' in name and 'playwright_worker.py' in cmd_str):
                 proc.kill()
                 killed_count += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
     return killed_count
 
@@ -436,6 +448,11 @@ while True:
                 if p.poll() is not None:
                     finished = True
                     exit_code = p.poll()
+                    # Zombi oluşmasını önle
+                    try:
+                        p.wait(timeout=3)
+                    except Exception:
+                        pass
             
             # Durum B: Bot Manager açıldığında "zombi" olarak devralındı (int PID)
             else:
