@@ -9,6 +9,12 @@ from .selector import SELECTORS
 class FiyatGuncelleSpider(scrapy.Spider):
     name = "fiyat_guncelle"
     
+    def __init__(self, name=None, **kwargs):
+        super(FiyatGuncelleSpider, self).__init__(name, **kwargs)
+        self._cmd_client = pymongo.MongoClient("mongodb://localhost:27017/")
+        self._cmd_col = self._cmd_client["neuranovav_db"]["bot_commands"]
+        self._throttle_sayac = 0
+    
     REGEX_RATING_AVG = re.compile(r'"averageRating"\s*:\s*([\d.]+)')
     REGEX_RATING_VAL = re.compile(r'"ratingValue"\s*:\s*"?([\d.]+)"?')
     REGEX_RATING_COUNT_1 = re.compile(r'"totalRatingCount"\s*:\s*(\d+)')
@@ -54,6 +60,16 @@ class FiyatGuncelleSpider(scrapy.Spider):
             )
 
     def parse_price(self, response):
+        
+        self._throttle_sayac += 1
+        if self._throttle_sayac % 50 == 0:
+            try:
+                throttle = self._cmd_col.find_one({"bot_id": "ram_throttle"})
+                if throttle:
+                    self.crawler.engine.slot.concurrency = throttle.get("concurrent", 16)
+            except:
+                pass
+        
         sayfa_basligi = response.css("title::text").get(default="").lower()
         if "doğrulama" in sayfa_basligi or "robot" in sayfa_basligi or "captcha" in response.url:
             self.logger.error(f"[Spider] CAPTCHA YAKALANDI! Fiyat Güncelleme Pas Geçiliyor: {response.url}")

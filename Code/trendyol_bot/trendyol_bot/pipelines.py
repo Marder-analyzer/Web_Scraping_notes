@@ -99,13 +99,6 @@ class TrendyolBotPipeline:
         else:
             spider.logger.info(f"[Pipeline] Yeni oturum | job_id={self.job_id}")
             
-        # FAZ 5: Bot başladı maili
-        self._send_status_mail(
-            subject="🟢 NeuraNovaV Bot Başladı",
-            baslik="Bot Çalışmaya Başladı",
-            renk="#2e7d32",
-            mesaj=f"Job ID: <b>{self.job_id}</b><br>Başlangıç: {self.start_time.strftime('%d/%m/%Y %H:%M')} UTC"
-        )
 
     def process_item(self, item, spider):
         adapter    = ItemAdapter(item)
@@ -339,18 +332,7 @@ class TrendyolBotPipeline:
             }}
         )
         
-        # FAZ 5: Bot bitti maili
-        self._send_status_mail(
-            subject="🔴 NeuraNovaV Bot Tamamlandı",
-            baslik="Scraping Tamamlandı",
-            renk="#1565c0",
-            mesaj=f"Job ID: <b>{self.job_id}</b><br>"
-                f"Toplam: <b>{self.islenen_toplam}</b> ürün<br>"
-                f"Yeni: <b>{self.stats['yeni_urun']}</b> | "
-                f"Güncelleme: <b>{self.stats['yeni_gun_kaydi']}</b> | "
-                f"Drop: <b>{self.stats['drop_fiyatsiz'] + self.stats['drop_hata']}</b><br>"
-                f"Süre: <b>{round(duration/60, 1)}</b> dakika"
-        )
+
         
         self.client.close()
 

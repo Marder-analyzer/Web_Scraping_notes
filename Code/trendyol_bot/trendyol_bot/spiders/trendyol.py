@@ -47,8 +47,11 @@ class TrendyolSpider(scrapy.Spider):
         self.scraped_count = 0
         self._mongo_client = pymongo.MongoClient("mongodb://localhost:27017/")
         self._failed_col = self._mongo_client["neuranovav_db"]["failed_urls"]
+        self._cmd_col = self._mongo_client["neuranovav_db"]["bot_commands"]  
+        self._throttle_sayac = 0  
         self._datetime = datetime
         self._timezone = timezone
+        
         self.logger.info(f"[Spider] Basladi | kombinasyon={len(self.categories)} | limit={self.MAX_SAYFA_LIMITI}")
 
     
@@ -123,6 +126,18 @@ class TrendyolSpider(scrapy.Spider):
     
     # bütün linkleri çekme işlemi ve dağıtma işlemini yaptığımız yer.
     def parse(self, response):
+        
+        # ── RAM THROTTLE ──
+        self._throttle_sayac += 1
+        if self._throttle_sayac % 50 == 0:
+            try:
+                throttle = self._cmd_col.find_one({"bot_id": "ram_throttle"})
+                if throttle:
+                    hedef = throttle.get("concurrent", 16)
+                    self.crawler.engine.slot.concurrency = hedef
+            except:
+                pass
+        
         category_name = response.meta.get("category_name")
         current_page = response.meta.get("page_number", 1)
         

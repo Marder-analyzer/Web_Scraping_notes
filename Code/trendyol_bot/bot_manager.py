@@ -147,8 +147,48 @@ son_ram_maili = 0
 son_acil_kapatma = 0
 def check_ram_and_alert():
     global son_ram_maili, son_acil_kapatma
-    ram_yuzde = psutil.virtual_memory().percent
 
+    # ── DİNAMİK RAM FREN ──
+    try:
+        sanal        = psutil.virtual_memory()
+        sistem_yuzde = sanal.percent
+        toplam_ram   = sanal.total
+        proje_ram    = 0
+
+        for proc in psutil.process_iter(['name', 'cmdline', 'memory_info']):
+            try:
+                name = (proc.info.get('name') or "").lower()
+                cmd  = " ".join(proc.info.get('cmdline') or []).lower()
+                if ("python" in name and any(x in cmd for x in ["scrapy","bot_manager","playwright","streamlit"])) or \
+                   (("chrome" in name or "chromium" in name) and "--headless" in cmd) or \
+                   "mongod" in name:
+                    proje_ram += proc.info['memory_info'].rss
+            except: pass
+
+        proje_yuzde = (proje_ram / toplam_ram) * 100
+
+        if   proje_yuzde > 88 or sistem_yuzde > 92: hedef = 2
+        elif proje_yuzde > 82 or sistem_yuzde > 88: hedef = 4
+        elif proje_yuzde > 75 or sistem_yuzde > 85: hedef = 8
+        else:                                        hedef = 16
+
+        mevcut = cmd_col.find_one({"bot_id": "ram_throttle"})
+        if not mevcut or mevcut.get("concurrent") != hedef:
+            cmd_col.update_one(
+                {"bot_id": "ram_throttle"},
+                {"$set": {
+                    "concurrent":   hedef,
+                    "proje_yuzde":  round(proje_yuzde, 1),
+                    "sistem_yuzde": round(sistem_yuzde, 1),
+                    "updated_at":   datetime.now(timezone.utc)
+                }},
+                upsert=True
+            )
+            print(f"🧠 RAM Fren: Proje %{proje_yuzde:.1f} | Sistem %{sistem_yuzde:.1f} → CONCURRENT={hedef}")
+    except Exception as e:
+        pass
+    
+    ram_yuzde = psutil.virtual_memory().percent
     
     # --- KADEME 1: %80 — Uyarı Maili ---
     if ram_yuzde > 80.0 and (time.time() - son_ram_maili > 3600):
