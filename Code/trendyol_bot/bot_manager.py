@@ -19,6 +19,7 @@ MAIL_SENDER = os.getenv("MAIL_SENDER", "")
 MAIL_APP_PASS = os.getenv("MAIL_APP_PASS", "")
 TR_TZ = pytz.timezone("Europe/Istanbul")
 
+
 def notify_bot_status(bot_id, is_start=True, exit_code=None):
     """Dashboard'daki mevcut HTML mail yapısını kullanarak şık bildirimler atar."""
     if bot_id == "ana_bot":
@@ -83,7 +84,6 @@ def notify_bot_status(bot_id, is_start=True, exit_code=None):
         print(f"⚠️ Mail gönderilemedi: {e}")
 
 
-son_ram_maili = 0
 
 def slaughter_zombies():
     """Görünmez (Headless) Chrome'ları ve asılı kalan Playwright işçilerini acımasızca katleder."""
@@ -102,7 +102,7 @@ def slaughter_zombies():
             pass
     return killed_count
 
-
+son_ram_kontrol = 0
 son_ram_maili = 0
 son_acil_kapatma = 0
 def check_ram_and_alert():
@@ -283,7 +283,10 @@ def close_active_jobs_in_db(bot_id, manual_stop=False):
 while True:
     try:
         
-        check_ram_and_alert()
+        if time.time() - son_ram_kontrol > 30:
+            check_ram_and_alert()
+            son_ram_kontrol = time.time()
+            
         # 1. MONGODB'DEN YENİ EMİRLERİ (PENDING) KONTROL ET
         bekleyen_emirler = list(cmd_col.find({
             "$or": [
