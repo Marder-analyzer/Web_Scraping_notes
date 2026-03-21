@@ -21,10 +21,6 @@ TR_TZ = pytz.timezone("Europe/Istanbul")
 
 
 def notify_bot_status(bot_id, is_start=True, exit_code=None):
-    """Dashboard'daki mevcut HTML mail yapısını kullanarak şık bildirimler atar."""
-    if bot_id == "ana_bot":
-        return
-    # Kayıtlı maili bul
     if not os.path.exists("saved_mails.json"): return
     with open("saved_mails.json", "r") as f:
         mails = json.load(f)
@@ -33,49 +29,81 @@ def notify_bot_status(bot_id, is_start=True, exit_code=None):
 
     zaman = datetime.now(TR_TZ).strftime('%d/%m/%Y %H:%M:%S')
 
-    # Duruma göre renk, ikon ve mesaj belirle
+    # DB'den özet al
+    try:
+        _db = client["neuranovav_db"]
+        latest_job = _db.jobs.find_one(sort=[("start_time", pymongo.DESCENDING)])
+        total_products = _db.products.count_documents({})
+        total_history  = _db.price_history.count_documents({})
+        failed_bekleyen = _db.failed_urls.count_documents({"cozuldu": False})
+        emekli_proxy   = _db.proxy_performance.count_documents({"retired": True})
+        proxy_stats    = _db.bot_commands.find_one({"bot_id": "proxy_stats"})
+        toplam_proxy   = proxy_stats.get("aktif_proxy", 0) if proxy_stats else 0
+        aktif_proxy    = max(0, toplam_proxy - emekli_proxy)
+
+        stats     = latest_job.get("stats", {}) if latest_job else {}
+        sure_sn   = latest_job.get("duration_seconds", 0) if latest_job else 0
+        hiz       = int(total_products / (sure_sn / 3600)) if sure_sn > 0 else 0
+        sure_str  = f"{int(sure_sn//3600)}s {int((sure_sn%3600)//60)}dk" if sure_sn else "-"
+
+        ozet_html = f"""
+        <h3 style="color:#444">📊 Anlık Sistem Özeti</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:14px">
+            <tr><td style="padding:7px;background:#f9f9f9"><b>🗃️ Toplam Ürün</b></td><td style="padding:7px;background:#f9f9f9;color:#2e7d32"><b>{total_products:,}</b></td></tr>
+            <tr><td style="padding:7px"><b>📈 Fiyat Geçmişi</b></td><td style="padding:7px">{total_history:,}</td></tr>
+            <tr><td style="padding:7px;background:#f9f9f9"><b>⚡ Saatlik Verim</b></td><td style="padding:7px;background:#f9f9f9">~{hiz:,} ürün/saat</td></tr>
+            <tr><td style="padding:7px"><b>✨ Yeni Keşfedilen</b></td><td style="padding:7px;color:#2e7d32">{stats.get('yeni_urun',0):,}</td></tr>
+            <tr><td style="padding:7px;background:#f9f9f9"><b>🔄 Gün İçi Değişim</b></td><td style="padding:7px;background:#f9f9f9">{stats.get('gun_ici_degisim',0):,}</td></tr>
+            <tr><td style="padding:7px"><b>🗑️ Fiyatsız Drop</b></td><td style="padding:7px;color:#c62828">{stats.get('drop_fiyatsiz',0):,}</td></tr>
+            <tr><td style="padding:7px;background:#f9f9f9"><b>✅ Aktif Proxy</b></td><td style="padding:7px;background:#f9f9f9">{aktif_proxy} / {toplam_proxy}</td></tr>
+            <tr><td style="padding:7px"><b>⏳ Bekleyen Hata URL</b></td><td style="padding:7px;color:#e65100">{failed_bekleyen:,}</td></tr>
+        </table>"""
+    except:
+        ozet_html = "<p style='color:#aaa'>Sistem özeti alınamadı.</p>"
+
     if is_start:
-        subject = f"🚀 NeuraNovaV: {bot_id.upper()} Sahaya Sürüldü"
-        renk = "#1565c0"  # Mavi
+        subject     = f"🚀 NeuraNovaV: {bot_id.upper()} Sahaya Sürüldü"
+        renk        = "#1565c0"
         durum_metni = "🟢 BAŞLATILDI"
-        mesaj = "Bot başarıyla sahaya sürüldü ve veri toplamaya/işlemeye başladı."
+        mesaj       = "Bot başarıyla sahaya sürüldü ve veri toplamaya/işlemeye başladı."
     else:
         if exit_code == 0:
-            subject = f"🏁 NeuraNovaV: {bot_id.upper()} Görevi Tamamladı"
-            renk = "#2e7d32"  # Yeşil
-            durum_metni = "✅ BAŞARIYLA TAMAMLANDI (İş Kalmadı)"
-            mesaj = "Bot atanan tüm işleri bitirdi ve güvenli bir şekilde sistemden ayrıldı."
+            subject     = f"🏁 NeuraNovaV: {bot_id.upper()} Görevi Tamamladı"
+            renk        = "#2e7d32"
+            durum_metni = "✅ BAŞARIYLA TAMAMLANDI"
+            mesaj       = "Bot tüm işleri bitirdi ve sistemden güvenli şekilde ayrıldı."
         elif exit_code == "Bilinmiyor":
-            subject = f"🛑 NeuraNovaV: {bot_id.upper()} Durduruldu"
-            renk = "#e65100"  # Turuncu
+            subject     = f"🛑 NeuraNovaV: {bot_id.upper()} Durduruldu"
+            renk        = "#e65100"
             durum_metni = "🛑 MANUEL DURDURULDU"
-            mesaj = "Bot kullanıcı tarafından Dashboard üzerinden veya sistem tarafından durduruldu."
+            mesaj       = "Bot kullanıcı tarafından durduruldu."
         else:
-            subject = f"🚨 NeuraNovaV: {bot_id.upper()} ÇÖKTÜ!"
-            renk = "#c62828"  # Kırmızı
-            durum_metni = f"❌ HATA İLE ÇÖKTÜ (Çıkış Kodu: {exit_code})"
-            mesaj = "Bot beklenmedik bir hatayla karşılaştı ve kapandı. Lütfen Dashboard loglarını kontrol edin."
+            subject     = f"🚨 NeuraNovaV: {bot_id.upper()} ÇÖKTÜ!"
+            renk        = "#c62828"
+            durum_metni = f"❌ HATA İLE ÇÖKTÜ (Kod: {exit_code})"
+            mesaj       = "Bot beklenmedik hatayla kapandı. Dashboard loglarını kontrol edin."
 
-    # Dashboard tarzı şık HTML Gövdesi
     html_body = f"""
     <html><body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:20px">
-    <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px;box-shadow:0 2px 8px #ccc">
-        <h2 style="color:{renk}; margin-top:0;">{durum_metni}</h2>
-        <p style="color:#555; font-size:16px;"><b>🤖 Bot ID:</b> {bot_id}</p>
-        <p style="color:#555; font-size:16px;"><b>📅 Zaman:</b> {zaman}</p>
-        <hr style="border:1px solid #eee; margin:15px 0;"/>
-        <p style="color:#333; font-size:15px;">{mesaj}</p>
-        <p style="color:#888;font-size:12px; margin-top:20px;">NeuraNovaV Komuta Merkezi Otomatik Bildirimi</p>
-    </div></body></html>
-    """
+    <div style="max-width:560px;margin:auto;background:white;border-radius:12px;padding:24px;box-shadow:0 2px 8px #ccc">
+        <h2 style="color:{renk};margin-top:0">{durum_metni}</h2>
+        <p style="color:#555;font-size:15px"><b>🤖 Bot:</b> {bot_id.upper()}</p>
+        <p style="color:#555;font-size:15px"><b>📅 Zaman:</b> {zaman}</p>
+        <hr style="border:1px solid #eee;margin:15px 0"/>
+        <p style="color:#333;font-size:14px">{mesaj}</p>
+        <hr style="border:1px solid #eee;margin:15px 0"/>
+        {ozet_html}
+        <p style="color:#888;font-size:12px;margin-top:20px">
+            📊 <a href="http://localhost:8501" style="color:#6a0dad">Dashboard'u Aç</a> &nbsp;|&nbsp; NeuraNovaV Otomatik Bildirim
+        </p>
+    </div></body></html>"""
 
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = f"NeuraNovaV Komuta <{MAIL_SENDER}>"
-        msg["To"] = target_mail
+        msg["From"]    = f"NeuraNovaV Komuta <{MAIL_SENDER}>"
+        msg["To"]      = target_mail
         msg.attach(MIMEText(html_body, "html"))
-
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(MAIL_SENDER, MAIL_APP_PASS)
             server.sendmail(MAIL_SENDER, target_mail, msg.as_string())
