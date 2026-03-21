@@ -206,9 +206,36 @@ def build_report_html(job, stats, total_products, total_history, subject_prefix=
     start_time = job.get("start_time")
     end_time   = job.get("end_time") or datetime.now(timezone.utc)
     sure = (end_time.replace(tzinfo=timezone.utc) - start_time.replace(tzinfo=timezone.utc)).total_seconds() if start_time else 0
+    sure_str = f"{int(sure//3600)}s {int((sure%3600)//60)}dk"
 
-    # --- PROXY TABLOSU OLUŞTURMA ---
-    # --- PROXY TABLOSU OLUŞTURMA ---
+    # Saatlik verim
+    hiz = int(toplam / (sure / 3600)) if sure > 0 else 0
+
+    # Tahmini bitiş
+    total_target = job.get("total_target_urls", 0)
+    gercek_toplam = total_products
+    bitis_str = "-"
+    if total_target > 0 and gercek_toplam > 0 and sure > 0 and total_target > gercek_toplam:
+        hiz_sn = gercek_toplam / sure
+        kalan_sn = (total_target - gercek_toplam) / hiz_sn
+        kalan_gun = int(kalan_sn // 86400)
+        kalan_saat = int((kalan_sn % 86400) // 3600)
+        bitis_str = f"{kalan_gun} gün {kalan_saat} saat sonra"
+
+    # Proxy özeti
+    try:
+        db_client = pymongo.MongoClient("mongodb://localhost:27017/")
+        _db = db_client["neuranovav_db"]
+        emekli_proxy = _db["proxy_performance"].count_documents({"retired": True})
+        proxy_stats  = _db["bot_commands"].find_one({"bot_id": "proxy_stats"})
+        toplam_proxy = proxy_stats.get("aktif_proxy", 0) if proxy_stats else 0
+        aktif_proxy  = max(0, toplam_proxy - emekli_proxy)
+        failed_cozulmemis = _db["failed_urls"].count_documents({"cozuldu": False})
+        failed_cozulmus   = _db["failed_urls"].count_documents({"cozuldu": True})
+    except:
+        aktif_proxy = emekli_proxy = toplam_proxy = failed_cozulmemis = failed_cozulmus = 0
+
+    # Proxy tablosu
     proxy_html = ""
     if proxy_data:
         satirlar = ""
@@ -238,27 +265,46 @@ def build_report_html(job, stats, total_products, total_history, subject_prefix=
     <div style="max-width:600px;margin:auto;background:white;border-radius:12px;padding:24px;box-shadow:0 2px 8px #ccc">
         <h2 style="color:#6a0dad">&#128760; NeuraNovaV Bot Raporu</h2>
         <p style="color:#555">{subject_prefix} &mdash; {datetime.now(TR_TZ).strftime('%d %B %Y %H:%M')}</p>
-        <p style="color:#888;font-size:13px">📊 Canlı dashboard için: <a href="http://localhost:8501" style="color:#6a0dad">http://localhost:8501</a></p>
+        <p style="color:#888;font-size:13px">📊 Canlı dashboard: <a href="http://localhost:8501" style="color:#6a0dad">http://localhost:8501</a></p>
         <hr/>
-        <h3>Operasyon Özeti</h3>
+
+        <h3>🤖 Bot Durumu</h3>
         <table style="width:100%;border-collapse:collapse">
-            <tr><td style="padding:8px;background:#f9f9f9"><b>Bot Durumu</b></td><td style="padding:8px">{status}</td></tr>
-            <tr><td style="padding:8px"><b>Toplam İşlenen URL</b></td><td style="padding:8px">{toplam:,}</td></tr>
-            <tr><td style="padding:8px;background:#f9f9f9"><b>Çalışma Süresi</b></td><td style="padding:8px;background:#f9f9f9">{round(sure/60,1)} dakika</td></tr>
+            <tr><td style="padding:8px;background:#f9f9f9"><b>Durum</b></td><td style="padding:8px">{status}</td></tr>
+            <tr><td style="padding:8px"><b>Çalışma Süresi</b></td><td style="padding:8px">{sure_str}</td></tr>
+            <tr><td style="padding:8px;background:#f9f9f9"><b>Saatlik Verim</b></td><td style="padding:8px;background:#f9f9f9">~{hiz:,} ürün/saat</td></tr>
+            <tr><td style="padding:8px"><b>Tahmini Bitiş</b></td><td style="padding:8px">{bitis_str}</td></tr>
         </table>
-        <h3>Veri Detayları</h3>
+
+        <h3>📦 Veri Durumu</h3>
         <table style="width:100%;border-collapse:collapse">
-            <tr><td style="padding:8px;background:#e8f5e9"><b>Yeni Keşfedilen Ürün</b></td><td style="padding:8px;background:#e8f5e9;color:#2e7d32"><b>{yeni:,}</b></td></tr>
-            <tr><td style="padding:8px"><b>Bugünün İlk Kaydı</b></td><td style="padding:8px;color:#1565c0"><b>{gun_kaydi:,}</b></td></tr>
-            <tr><td style="padding:8px;background:#f9f9f9"><b>Gün İçi Değişim</b></td><td style="padding:8px;background:#f9f9f9;color:#e65100"><b>{degisim:,}</b></td></tr>
-            <tr><td style="padding:8px"><b>Fiyatsız (Düşürülen)</b></td><td style="padding:8px;color:#c62828"><b>{fiyatsiz:,}</b></td></tr>
-            <tr><td style="padding:8px;background:#f9f9f9"><b>Hatalı (Düşürülen)</b></td><td style="padding:8px;background:#f9f9f9;color:#c62828"><b>{hata:,}</b></td></tr>
+            <tr><td style="padding:8px;background:#e8f5e9"><b>Toplam Benzersiz Ürün</b></td><td style="padding:8px;background:#e8f5e9;color:#2e7d32"><b>{total_products:,}</b></td></tr>
+            <tr><td style="padding:8px"><b>Toplam Fiyat Geçmişi</b></td><td style="padding:8px">{total_history:,}</td></tr>
+            <tr><td style="padding:8px;background:#f9f9f9"><b>Toplam İşlenen URL</b></td><td style="padding:8px;background:#f9f9f9">{toplam:,}</td></tr>
         </table>
-        <h3>Veritabanı Durumu</h3>
+
+        <h3>📊 Oturum İstatistikleri</h3>
         <table style="width:100%;border-collapse:collapse">
-            <tr><td style="padding:8px;background:#f9f9f9"><b>Toplam Benzersiz Ürün</b></td><td style="padding:8px;background:#f9f9f9">{total_products:,}</td></tr>
-            <tr><td style="padding:8px"><b>Toplam Fiyat Geçmişi Kaydı</b></td><td style="padding:8px">{total_history:,}</td></tr>
+            <tr><td style="padding:8px;background:#e8f5e9"><b>✨ Yeni Keşfedilen</b></td><td style="padding:8px;background:#e8f5e9;color:#2e7d32"><b>{yeni:,}</b></td></tr>
+            <tr><td style="padding:8px"><b>📅 Bugünün İlk Kaydı</b></td><td style="padding:8px;color:#1565c0"><b>{gun_kaydi:,}</b></td></tr>
+            <tr><td style="padding:8px;background:#f9f9f9"><b>🔄 Gün İçi Değişim</b></td><td style="padding:8px;background:#f9f9f9;color:#e65100"><b>{degisim:,}</b></td></tr>
+            <tr><td style="padding:8px"><b>🗑️ Fiyatsız Düşürülen</b></td><td style="padding:8px;color:#c62828"><b>{fiyatsiz:,}</b></td></tr>
+            <tr><td style="padding:8px;background:#f9f9f9"><b>❌ Hatalı Düşürülen</b></td><td style="padding:8px;background:#f9f9f9;color:#c62828"><b>{hata:,}</b></td></tr>
         </table>
+
+        <h3>🛡️ Proxy Özeti</h3>
+        <table style="width:100%;border-collapse:collapse">
+            <tr><td style="padding:8px;background:#f9f9f9"><b>✅ Aktif Proxy</b></td><td style="padding:8px;background:#f9f9f9">{aktif_proxy}</td></tr>
+            <tr><td style="padding:8px"><b>🚫 Emekli Proxy</b></td><td style="padding:8px">{emekli_proxy}</td></tr>
+            <tr><td style="padding:8px;background:#f9f9f9"><b>📦 Toplam Havuz</b></td><td style="padding:8px;background:#f9f9f9">{toplam_proxy}</td></tr>
+        </table>
+
+        <h3>🔴 URL Hata Özeti</h3>
+        <table style="width:100%;border-collapse:collapse">
+            <tr><td style="padding:8px;background:#f9f9f9"><b>⏳ Çözülmemiş</b></td><td style="padding:8px;background:#f9f9f9;color:#c62828"><b>{failed_cozulmemis:,}</b></td></tr>
+            <tr><td style="padding:8px"><b>✅ Çözülmüş</b></td><td style="padding:8px;color:#2e7d32"><b>{failed_cozulmus:,}</b></td></tr>
+        </table>
+
         <hr/>
         {proxy_html}
         <p style="color:#aaa;font-size:12px">NeuraNovaV Otomatik Raporlama Sistemi</p>
@@ -957,9 +1003,10 @@ if latest_job:
                     f"⏳ Sonraki güncelleme: **{kalan_dk} dk {kalan_s:02d} sn** sonra"
                 )
                 try:
-                    toplam_proxy  = db["proxy_performance"].count_documents({})
-                    emekli_proxy  = db["proxy_performance"].count_documents({"retired": True})
-                    aktif_proxy   = toplam_proxy - emekli_proxy
+                    emekli_proxy = db["proxy_performance"].count_documents({"retired": True})
+                    proxy_stats  = db["bot_commands"].find_one({"bot_id": "proxy_stats"})
+                    toplam_proxy = proxy_stats.get("aktif_proxy", 0) if proxy_stats else 0
+                    aktif_proxy  = max(0, toplam_proxy - emekli_proxy)
 
                     # Scrapy'deki anlık good sayısını bot_commands'dan oku
                     throttle = db["bot_commands"].find_one({"bot_id": "ram_throttle"})

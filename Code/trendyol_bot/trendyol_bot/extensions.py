@@ -280,6 +280,21 @@ class LiveProxyUpdater:
             f"çöp: {result['trash']}"
         )
 
+        try:
+            if self._db is not None:
+                self._db["bot_commands"].update_one(
+                    {"bot_id": "proxy_stats"},
+                    {"$set": {
+                        "aktif_proxy": len(ordered),
+                        "updated_at": datetime.now(timezone.utc)
+                    }},
+                    upsert=True
+                )
+        except:
+            pass
+
+        
+        
         self._log_source_status(result)
         
         if getattr(self, 'is_paused', False):
