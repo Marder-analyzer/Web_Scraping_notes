@@ -398,11 +398,24 @@ class LiveProxyUpdater:
         try:
             for mw in self.crawler.engine.downloader.middleware.middlewares:
                 if mw.__class__.__name__ == "RotatingProxyMiddleware":
-                    good = len(mw.proxies.good)
+                    good      = len(mw.proxies.good)
                     unchecked = len(mw.proxies.unchecked)
-                    
-                    # YENİ MANTIK: Hem "iyi" hem de "test edilecek (unchecked)" proxy bittiyse uyu!
-                    if good == 0 and unchecked == 0:  
+                    dead      = len([p for p, st in mw.proxies.proxies.items()
+                                     if hasattr(st, "state") and str(st.state) == "dead"])
+
+                    if self._db is not None:
+                        self._db["bot_commands"].update_one(
+                            {"bot_id": "proxy_stats"},
+                            {"$set": {
+                                "scrapy_good":      good,
+                                "scrapy_dead":      dead,
+                                "scrapy_unchecked": unchecked,
+                                "updated_at":       datetime.now(timezone.utc)
+                            }},
+                            upsert=True
+                        )
+
+                    if good == 0 and unchecked == 0:
                         log.warning(f"Proxy havuzu tamamen tükendi (good=0, unchecked=0) | Direkt geçiş")
                         self._enter_sleep_mode()
                     break

@@ -1006,15 +1006,15 @@ if latest_job:
                     emekli_proxy = db["proxy_performance"].count_documents({"retired": True})
                     proxy_stats  = db["bot_commands"].find_one({"bot_id": "proxy_stats"})
                     toplam_proxy = proxy_stats.get("aktif_proxy", 0) if proxy_stats else 0
+                    scrapy_good  = proxy_stats.get("scrapy_good", 0) if proxy_stats else 0
+                    scrapy_dead  = proxy_stats.get("scrapy_dead", 0) if proxy_stats else 0
                     aktif_proxy  = max(0, toplam_proxy - emekli_proxy)
 
-                    # Scrapy'deki anlık good sayısını bot_commands'dan oku
-                    throttle = db["bot_commands"].find_one({"bot_id": "ram_throttle"})
-
-                    pc1, pc2, pc3 = st.columns(3)
-                    pc1.metric("✅ Aktif Proxy",  f"{aktif_proxy}")
-                    pc2.metric("🚫 Emekli Proxy", f"{emekli_proxy}")
-                    pc3.metric("📦 Toplam Havuz", f"{toplam_proxy}")
+                    pc1, pc2, pc3, pc4 = st.columns(4)
+                    pc1.metric("🟢 Scrapy Good",   f"{scrapy_good}")
+                    pc2.metric("✅ Aktif Havuz",    f"{aktif_proxy}")
+                    pc3.metric("🚫 Emekli Proxy",   f"{emekli_proxy}")
+                    pc4.metric("📦 Toplam Havuz",   f"{toplam_proxy}")
                 except:
                     pass
     except Exception as e:
