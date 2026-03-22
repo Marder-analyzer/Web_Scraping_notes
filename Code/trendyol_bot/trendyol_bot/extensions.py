@@ -337,7 +337,7 @@ class LiveProxyUpdater:
                 self._db["jobs"].update_one(
                     {"status": "Running"},
                     {"$set": {"last_ping": datetime.now(timezone.utc)}},
-                    sort=[("start_time", -1)]
+                    sort=[("start_time", pymongo.DESCENDING)]
                 )
                 log.info("sleep mode heartbeat atıldı.")
         except Exception as e:
@@ -388,7 +388,7 @@ class LiveProxyUpdater:
                 self._db["jobs"].update_one(
                     {"status": "Running"},
                     {"$set": {"last_ping": datetime.now(timezone.utc)}},
-                    sort=[("start_time", -1)]
+                    sort=[("start_time", pymongo.DESCENDING)]
                 )
         except Exception as e:
             log.warning(f"health heartbeat hatası: {e}")
