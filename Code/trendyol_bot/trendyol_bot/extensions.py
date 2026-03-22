@@ -229,13 +229,6 @@ class LiveProxyUpdater:
                     # Madde 3: sadece yeni proxy ekle
                     yeni_gelenler = [p for p in ordered if p not in mw.proxies.proxies]
 
-                    # Yeni proxy geldiyse eski "good" olanları unchecked'e at — taze proxiler önce denensin
-                    if yeni_gelenler:
-                        good_copy = list(mw.proxies.good)
-                        for p in good_copy:
-                            mw.proxies.good.discard(p)
-                            mw.proxies.unchecked.add(p)
-                        log.info(f"yeni proxy geldi | {len(good_copy)} eski good → unchecked'e alındı")
 
                     # Yeni proxileri ekle
                     for p in yeni_gelenler:
