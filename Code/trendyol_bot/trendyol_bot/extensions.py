@@ -12,6 +12,11 @@ log = logging.getLogger("proxy_updater")
 PROXY_SOURCES = [
     "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
     "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+    "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text",
+    "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&country=tr&proxy_format=protocolipport&format=text",
+    "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&country=tr&proxy_format=protocolipport&format=text&timeout=10000",
+
+    
 ]
 
 # Madde 6: Yaygın Türk ISP IP bloklarının önekleri (kaba TR filtresi)
@@ -149,14 +154,18 @@ class LiveProxyUpdater:
                     line = line.strip()
                     if not line:
                         continue
-                    parts = line.split(":")
-                    if len(parts) == 2 and parts[1].isdigit():
-                        p = f"http://{line}"
-                        if p not in tum_proxies:  # Sadece daha önce eklenmemişse listeye al
-                            proxies.append(p)
-                            tum_proxies.add(p)
+                    if line.startswith("http://") or line.startswith("https://"):
+                        p = line.strip()
                     else:
-                        trash += 1
+                        parts = line.split(":")
+                        if len(parts) == 2 and parts[1].isdigit():
+                            p = f"http://{line}"
+                        else:
+                            trash += 1
+                            continue
+                    if p not in tum_proxies:
+                        proxies.append(p)
+                        tum_proxies.add(p)
 
                 # _is_tr fonksiyonunun dosyanda var olduğunu varsayıyoruz
                 tr_list      = [p for p in proxies if getattr(self, '_is_tr', lambda x: False)(p)]
