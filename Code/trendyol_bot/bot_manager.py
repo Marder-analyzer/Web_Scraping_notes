@@ -77,6 +77,11 @@ def notify_bot_status(bot_id, is_start=True, exit_code=None):
             renk        = "#e65100"
             durum_metni = "🛑 MANUEL DURDURULDU"
             mesaj       = "Bot kullanıcı tarafından durduruldu."
+        elif exit_code == "heartbeat_yok":
+            subject     = f"⚠️ NeuraNovaV: {bot_id.upper()} YANIT VERMİYOR"
+            renk        = "#f57c00"
+            durum_metni = "⚠️ YANIT VERMİYOR"
+            mesaj       = "Bot process çalışıyor ama 30 dakikadır heartbeat sinyali gelmiyor. Dashboard'u kontrol edin."
         else:
             subject     = f"🚨 NeuraNovaV: {bot_id.upper()} ÇÖKTÜ!"
             renk        = "#c62828"
@@ -145,6 +150,9 @@ def slaughter_zombies():
 son_ram_kontrol = 0
 son_ram_maili = 0
 son_acil_kapatma = 0
+son_heartbeat_maili = 0
+son_heartbeat_durumu = "normal"
+
 def check_ram_and_alert():
     global son_ram_maili, son_acil_kapatma
 
@@ -443,6 +451,33 @@ while True:
         
         if time.time() - son_ram_kontrol > 30:
             check_ram_and_alert()
+            try:
+                latest_job = db.jobs.find_one({"status": "Running"}, sort=[("start_time", -1)])
+                if latest_job:
+                    last_ping = latest_job.get("last_ping")
+                    if last_ping:
+                        fark = (datetime.now(timezone.utc) - last_ping.replace(tzinfo=timezone.utc)).total_seconds()
+                        
+                        if fark > 1800 and son_heartbeat_durumu == "normal":
+                            # 30 dakikadır sinyal yok — ilk uyarı
+                            son_heartbeat_durumu = "uyari"
+                            son_heartbeat_maili = time.time()
+                            notify_bot_status("ana_bot", is_start=False, exit_code="heartbeat_yok")
+                            print(f"⚠️ Heartbeat uyarısı gönderildi | {int(fark//60)} dk sinyal yok")
+                            
+                        elif fark > 1800 and son_heartbeat_durumu == "uyari":
+                            # Hala sorun var — 2 saatte bir tekrar at
+                            if time.time() - son_heartbeat_maili > 7200:
+                                son_heartbeat_maili = time.time()
+                                notify_bot_status("ana_bot", is_start=False, exit_code="heartbeat_yok")
+                                print(f"⚠️ Heartbeat tekrar uyarısı | {int(fark//60)} dk sinyal yok")
+                                
+                        elif fark <= 1800 and son_heartbeat_durumu == "uyari":
+                            # Düzeldi — bildir
+                            son_heartbeat_durumu = "normal"
+                            print(f"✅ Heartbeat normale döndü")
+            except Exception as e:
+                pass
             son_ram_kontrol = time.time()
             
         # 1. MONGODB'DEN YENİ EMİRLERİ (PENDING) KONTROL ET
