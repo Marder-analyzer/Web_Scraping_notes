@@ -537,12 +537,27 @@ class LiveProxyUpdater:
                 return_document=pymongo.ReturnDocument.AFTER
             )
             # BAN_LIMIT aşıldıysa retire et
-            if result and result.get("ban_count", 0) >= BAN_LIMIT:
-                self._db["proxy_performance"].update_one(
-                    {"proxy": proxy},
-                    {"$set": {"retired": True}}
-                )
-                log.info(f"proxy emekliye ayrıldı | {proxy} | {BAN_LIMIT} ban")
+            if result:
+                ban_count     = result.get("ban_count", 0)
+                success_count = result.get("success_count", 0)
+                toplam        = ban_count + success_count
+                oran          = success_count / toplam if toplam > 0 else 0
+
+                if success_count == 0 and ban_count >= 5:
+                    dinamik_limit = 5       # hiç başarı yok, hızlı emekli
+                elif oran >= 0.70:
+                    dinamik_limit = 500     # iyi proxy, uzun çalışsın
+                elif oran >= 0.40:
+                    dinamik_limit = 100     # orta proxy
+                else:
+                    dinamik_limit = 10      # kötü proxy, hızlı emekli
+
+                if ban_count >= dinamik_limit:
+                    self._db["proxy_performance"].update_one(
+                        {"proxy": proxy},
+                        {"$set": {"retired": True}}
+                    )
+                    log.info(f"proxy emekliye ayrıldı | {proxy} | ban={ban_count} başarı={success_count} oran={oran:.0%} limit={dinamik_limit}")
         except Exception as e:
             log.warning(f"ban kaydı yazılamadı | {e}")
 
