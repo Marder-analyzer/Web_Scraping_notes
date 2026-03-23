@@ -1,7 +1,7 @@
 import logging
 import urllib.request
 from datetime import datetime, timezone
-
+import time
 import pymongo
 from scrapy import signals
 from twisted.internet import task, threads, reactor
@@ -59,6 +59,7 @@ class LiveProxyUpdater:
         self.crawler = crawler
         self.interval = 900
         self._sleeping = False
+        self._last_alert_time = 0
         self._db = None
 
         # Middleware başlamadan önce dosya hazır olmalı — içi boşsa NotConfigured fırlatır
@@ -346,7 +347,9 @@ class LiveProxyUpdater:
         except Exception as e:
             log.warning(f"direkt geçiş başarısız | {e}")
         
-        self._send_proxy_alert()
+        if time.time() - self._last_alert_time > 3600:
+            self._send_proxy_alert()
+            self._last_alert_time = time.time()
         self._trigger_update()
         
     def response_received(self, response, request, spider):
