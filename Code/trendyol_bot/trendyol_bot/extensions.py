@@ -36,7 +36,8 @@ TR_PREFIXES = (
 BAN_LIMIT       = 30    # Madde 20: kaç ban sonra retired
 MONGO_URI      = "mongodb://localhost:27017/"
 MONGO_DB       = "neuranovav_db"    # pipelines.py ile aynı
-
+HEDEF_HAVUZ    = 50    
+DOLUM_ESIGI    = 10
 
 def _is_tr(proxy_url: str) -> bool:
     """http://IP:PORT formatındaki proxy'nin TR bloğunda olup olmadığını kontrol eder."""
@@ -242,6 +243,16 @@ class LiveProxyUpdater:
                     # Madde 3: sadece yeni proxy ekle
                     yeni_gelenler = [p for p in ordered if p not in mw.proxies.proxies]
 
+                    # HAVUZ LİMİTİ: HEDEF_HAVUZ'u aşma, sadece boş slot kadar ekle
+                    mevcut_toplam = len(mw.proxies.unchecked) + len(mw.proxies.good)
+                    bos_slot = max(0, HEDEF_HAVUZ - mevcut_toplam)
+                    if bos_slot == 0:
+                        log.info(f"Proxy havuzu dolu ({mevcut_toplam}/{HEDEF_HAVUZ}), yeni ekleme atlandı")
+                        yeni_gelenler = []
+                    else:
+                        yeni_gelenler = yeni_gelenler[:bos_slot]
+                        log.info(f"Havuz dolumu: {mevcut_toplam}/{HEDEF_HAVUZ} → {len(yeni_gelenler)} eklenecek")
+                    
 
                     # Yeni proxileri ekle
                     for p in yeni_gelenler:
@@ -422,7 +433,9 @@ class LiveProxyUpdater:
                             }},
                             upsert=True
                         )
-
+                    if good < DOLUM_ESIGI and not self._sleeping:
+                        log.info(f"Proxy havuzu azaldı (good={good} < {DOLUM_ESIGI}), yenileme tetikleniyor...")
+                        self._trigger_update()
                     if good == 0 and (unchecked == 0 or unchecked > 50):
                         log.warning(f"Proxy havuzu tamamen tükendi (good=0, unchecked=0) | Direkt geçiş")
                         self._enter_sleep_mode()
