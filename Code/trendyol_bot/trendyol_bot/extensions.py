@@ -12,8 +12,11 @@ log = logging.getLogger("proxy_updater")
 PROXY_SOURCES = [
     "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
     "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
-    "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text",
-    "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&country=tr&proxy_format=protocolipport&format=text",
+    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
+    "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/http.txt",
+    "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/countries/TR/proxies.txt",
+    "https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt",
+    "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/generated/http_proxies.txt",
     "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&country=tr&proxy_format=protocolipport&format=text&timeout=10000",
 
     
