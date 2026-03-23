@@ -36,8 +36,8 @@ TR_PREFIXES = (
 BAN_LIMIT       = 30    # Madde 20: kaç ban sonra retired
 MONGO_URI      = "mongodb://localhost:27017/"
 MONGO_DB       = "neuranovav_db"    # pipelines.py ile aynı
-HEDEF_HAVUZ    = 50    
-DOLUM_ESIGI    = 10
+HEDEF_HAVUZ    = 5
+DOLUM_ESIGI    = 5
 
 def _is_tr(proxy_url: str) -> bool:
     """http://IP:PORT formatındaki proxy'nin TR bloğunda olup olmadığını kontrol eder."""
@@ -546,7 +546,7 @@ class LiveProxyUpdater:
                 if success_count == 0 and ban_count >= 5:
                     dinamik_limit = 5       # hiç başarı yok, hızlı emekli
                 elif oran >= 0.70:
-                    dinamik_limit = 500     # iyi proxy, uzun çalışsın
+                    dinamik_limit = 10000     # iyi proxy, uzun çalışsın
                 elif oran >= 0.40:
                     dinamik_limit = 100     # orta proxy
                 else:
