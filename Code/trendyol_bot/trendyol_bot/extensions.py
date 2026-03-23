@@ -36,8 +36,8 @@ TR_PREFIXES = (
 BAN_LIMIT       = 30    # Madde 20: kaç ban sonra retired
 MONGO_URI      = "mongodb://localhost:27017/"
 MONGO_DB       = "neuranovav_db"    # pipelines.py ile aynı
-HEDEF_HAVUZ    = 5
-DOLUM_ESIGI    = 5
+HEDEF_HAVUZ    = 16 
+DOLUM_ESIGI    = 8
 
 def _is_tr(proxy_url: str) -> bool:
     """http://IP:PORT formatındaki proxy'nin TR bloğunda olup olmadığını kontrol eder."""
