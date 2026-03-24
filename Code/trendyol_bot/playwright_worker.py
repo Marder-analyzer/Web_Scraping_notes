@@ -163,200 +163,208 @@ def get_product_data_with_playwright(context, url):
     finally:
         page.close()
 
-def mod1_kuyruk_temizle(context,job_id):
+def mod1_kuyruk_temizle(context, job_id):
     """SADECE fiyatı eksik olan hatalı URL'leri kurtarır."""
     update_pw_stats(job_id, "hata_coz", 0, 0)
-    while True:
-        bekleyenler = list(failed_col.find({
-            "cozuldu": False, 
-            "hata_tipi": {"$in": [
-                "price_missing", 
-                "HTTP_403", 
-                "HTTP_429",
-                "CONNECTION_ERROR",
-                "TCPTimedOutError",
-                "ConnectionRefusedError",
-                "TimeoutError"
-            ]}
-        }).limit(10))
+    
+    # LIMIT 50 YAPILDI
+    bekleyenler = list(failed_col.find({
+        "cozuldu": False, 
+        "hata_tipi": {"$in": [
+            "price_missing", 
+            "HTTP_403", 
+            "HTTP_429",
+            "CONNECTION_ERROR",
+            "TCPTimedOutError",
+            "ConnectionRefusedError",
+            "TimeoutError"
+        ]}
+    }).limit(50))
+    
+    if not bekleyenler:
+        print("\n✅ Hata kuyruğunda 'Fiyatı Eksik' ürün kalmadı. İşlem tamamlandı.")
+        return False
         
-        if not bekleyenler:
-            print("\n✅ Hata kuyruğunda 'Fiyatı Eksik' ürün kalmadı. İşlem tamamlandı.")
-            break
-            
-        print(f"\n[MOD 1] ⏳ Kuyruktan {len(bekleyenler)} adet URL kurtarılıyor...")
-        simdi = datetime.now(timezone.utc)
-        today_str = simdi.strftime("%Y-%m-%d")
-        
-        basarili_sayisi = 0 
-        deneme_sayisi = len(bekleyenler) 
-        
-        for item in bekleyenler:
-            # ── RAM KONTROL ──
+    print(f"\n[MOD 1] ⏳ Kuyruktan {len(bekleyenler)} adet URL kurtarılıyor...")
+    simdi = datetime.now(timezone.utc)
+    today_str = simdi.strftime("%Y-%m-%d")
+    
+    basarili_sayisi = 0 
+    deneme_sayisi = len(bekleyenler) 
+    
+    for item in bekleyenler:
+        # ── RAM KONTROL ──
+        asil_limit, proje_yuzde, limit = check_playwright_ram()
+        if asil_limit:
+            time.sleep(10)  # 10 sn bekle, RAM düşsün
             asil_limit, proje_yuzde, limit = check_playwright_ram()
             if asil_limit:
-                import time
-                time.sleep(10)  # 10 sn bekle, RAM düşsün
-                asil_limit, proje_yuzde, limit = check_playwright_ram()
-                if asil_limit:
-                    print(f"⛔ RAM hala yüksek (%{proje_yuzde:.1f}), bu tur atlanıyor...")
-                    continue
-            # ── RAM KONTROL SONU ──
-            url = item["url"]
-            data, status = get_product_data_with_playwright(context, url)
-            
-            if data and data.get("price"):
-                products_col.update_one({"url": url}, {"$set": {"title": data["title"], "category": data["category"], "images": data["images"], "explanation": data["explanation"], "attributes": data["attributes"], "last_seen": simdi, "scrape_method": "playwright"}}, upsert=True)
-                prices_col.update_one({"url": url, "date": today_str}, {"$set": {"price": data["price"], "evaluation": data["evaluation"], "evaluation_len": data["evaluation_len"]}}, upsert=True)
-                failed_col.update_one({"_id": item["_id"]}, {"$set": {"cozuldu": True, "cozulme_tarihi": simdi}})
-                basarili_sayisi += 1
-                print(f"  🟢 KURTARILDI: {data['title'][:30]}... | Fiyat: {data['price']} TL")
-            else:
-                failed_col.update_one(
-                    {"_id": item["_id"]},
-                    {
-                        "$inc": {"playwright_deneme": 1},
-                        "$set": {"son_hata_sebebi": status},
-                        "$push": {
-                            "attempts": {
-                                "$each": [{"ts": simdi, "status": status, "worker": "playwright"}],
-                                "$slice": -20  # FIX: array şişmez
-                            }
+                print(f"⛔ RAM hala yüksek (%{proje_yuzde:.1f}), bu tur atlanıyor...")
+                continue
+        # ── RAM KONTROL SONU ──
+        
+        url = item["url"]
+        data, status = get_product_data_with_playwright(context, url)
+        
+        if data and data.get("price"):
+            products_col.update_one({"url": url}, {"$set": {"title": data["title"], "category": data["category"], "images": data["images"], "explanation": data["explanation"], "attributes": data["attributes"], "last_seen": simdi, "scrape_method": "playwright"}}, upsert=True)
+            prices_col.update_one({"url": url, "date": today_str}, {"$set": {"price": data["price"], "evaluation": data["evaluation"], "evaluation_len": data["evaluation_len"]}}, upsert=True)
+            failed_col.update_one({"_id": item["_id"]}, {"$set": {"cozuldu": True, "cozulme_tarihi": simdi}})
+            basarili_sayisi += 1
+            print(f"  🟢 KURTARILDI: {data['title'][:30]}... | Fiyat: {data['price']} TL")
+        else:
+            failed_col.update_one(
+                {"_id": item["_id"]},
+                {
+                    "$inc": {"playwright_deneme": 1},
+                    "$set": {"son_hata_sebebi": status},
+                    "$push": {
+                        "attempts": {
+                            "$each": [{"ts": simdi, "status": status, "worker": "playwright"}],
+                            "$slice": -20  # FIX: array şişmez
                         }
                     }
-                )
-                print(f"  🔴 BAŞARISIZ: {status} -> {url.split('?')[0][-30:]}")
-        update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi)
+                }
+            )
+            print(f"  🔴 BAŞARISIZ: {status} -> {url.split('?')[0][-30:]}")
+            
+    update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi)
+    return True
+
+
 def mod2_fiyat_guncelle(context, job_id):
     """SADECE veritabanındaki kayıtlı ürünlerin bugünkü fiyatlarını günceller."""
     update_pw_stats(job_id, "fiyat_guncelle", 0, 0)
-    while True:
-        simdi = datetime.now(timezone.utc)
-        today_str = simdi.strftime("%Y-%m-%d")
+    
+    simdi = datetime.now(timezone.utc)
+    today_str = simdi.strftime("%Y-%m-%d")
+    
+    guncellenen_urller = prices_col.distinct("url", {"date": today_str})
+    # LIMIT 50 YAPILDI
+    guncellenecekler = list(products_col.find({
+        "url": {"$nin": guncellenen_urller},
+        "scrape_method": "playwright"
+    }, {"url": 1}).limit(50))
+    
+    if not guncellenecekler:
+        print("\n✅ Tüm kayıtlı ürünlerin bugünkü fiyatları güncel! İşlem tamamlandı.")
+        return False
         
-        guncellenen_urller = prices_col.distinct("url", {"date": today_str})
-        guncellenecekler = list(products_col.find({
-            "url": {"$nin": guncellenen_urller},
-            "scrape_method": "playwright"
-        }, {"url": 1}).limit(10))
+    print(f"\n[MOD 2] 🔄 {len(guncellenecekler)} kayıtlı ürünün fiyatı güncelleniyor...")
+    
+    basarili_sayisi = 0 
+    deneme_sayisi = len(guncellenecekler) 
+    
+    for item in guncellenecekler:
+        url = item["url"]
+        data, status = get_product_data_with_playwright(context, url)
         
-        if not guncellenecekler:
-            print("\n✅ Tüm kayıtlı ürünlerin bugünkü fiyatları güncel! İşlem tamamlandı.")
-            break
+        if data and data.get("price"):
+            products_col.update_one({"url": url}, {"$set": {"last_seen": simdi, "images": data["images"], "explanation": data["explanation"], "attributes": data["attributes"], "scrape_method": "playwright"}})
+            prices_col.update_one({"url": url, "date": today_str}, {"$set": {"price": data["price"], "evaluation": data["evaluation"], "evaluation_len": data["evaluation_len"]}}, upsert=True)
+            basarili_sayisi += 1
+            print(f"  🔵 GÜNCELLENDİ: Fiyat -> {data['price']} TL | {data['title'][:30]}...")
+        else:
+            print(f"  🟠 PAS GEÇİLDİ: {status} -> {url.split('?')[0][-30:]}")
             
-        print(f"\n[MOD 2] 🔄 {len(guncellenecekler)} kayıtlı ürünün fiyatı güncelleniyor...")
-        
-        basarili_sayisi = 0 
-        deneme_sayisi = len(guncellenecekler) 
-        
-        for item in guncellenecekler:
-            url = item["url"]
-            data, status = get_product_data_with_playwright(context, url)
-            
-            if data and data.get("price"):
-                products_col.update_one({"url": url}, {"$set": {"last_seen": simdi, "images": data["images"], "explanation": data["explanation"], "attributes": data["attributes"], "scrape_method": "playwright"}})
-                prices_col.update_one({"url": url, "date": today_str}, {"$set": {"price": data["price"], "evaluation": data["evaluation"], "evaluation_len": data["evaluation_len"]}}, upsert=True)
-                basarili_sayisi += 1
-                print(f"  🔵 GÜNCELLENDİ: Fiyat -> {data['price']} TL | {data['title'][:30]}...")
-            else:
-                print(f"  🟠 PAS GEÇİLDİ: {status} -> {url.split('?')[0][-30:]}")
-        update_pw_stats(job_id, "fiyat_guncelle", deneme_sayisi, basarili_sayisi)
+    update_pw_stats(job_id, "fiyat_guncelle", deneme_sayisi, basarili_sayisi)
+    return True
+
+
 def mod3_liste_kurtar(context, job_id):
     """Liste sayfalarındaki (pi=) 403'lü URL'lere girer, 24 ürünü bulup kazır."""
     update_pw_stats(job_id, "hata_coz", 0, 0)
     
-    while True:
-        # Önce kurtarılmamış liste sayfalarını al
-        bekleyenler = list(failed_col.find({
-            "cozuldu": False,
-            "sayfa_turu": "liste"
-        }).limit(5))
+    # 2 Liste sayfası x 24 ürün = 48 URL yapar (50 URL barajımız için ideal)
+    bekleyenler = list(failed_col.find({
+        "cozuldu": False,
+        "sayfa_turu": "liste"
+    }).limit(2))
+    
+    if not bekleyenler:
+        print("\n✅ Kurtarılacak liste sayfası kalmadı.")
+        return False
+    
+    print(f"\n[MOD 3] 🔍 {len(bekleyenler)} liste sayfası kurtarılıyor...")
+    simdi = datetime.now(timezone.utc)
+    today_str = simdi.strftime("%Y-%m-%d")
+    
+    basarili_sayisi = 0
+    deneme_sayisi = 0
+    
+    for item in bekleyenler:
+        liste_url = item["url"]
+        print(f"\n  📋 Liste sayfasına giriliyor: {liste_url[-60:]}")
         
-        if not bekleyenler:
-            print("\n✅ Kurtarılacak liste sayfası kalmadı.")
-            break
-        
-        print(f"\n[MOD 3] 🔍 {len(bekleyenler)} liste sayfası kurtarılıyor...")
-        simdi = datetime.now(timezone.utc)
-        today_str = simdi.strftime("%Y-%m-%d")
-        
-        basarili_sayisi = 0
-        deneme_sayisi = 0
-        
-        for item in bekleyenler:
-            liste_url = item["url"]
-            print(f"\n  📋 Liste sayfasına giriliyor: {liste_url[-60:]}")
+        try:
+            page = context.new_page()
+            page.goto(liste_url, wait_until="load", timeout=30000)
+            page.wait_for_timeout(2000)
             
-            try:
-                page = context.new_page()  # LİSTE İÇİN GEÇİCİ SEKME AÇ
-                page.goto(liste_url, wait_until="load", timeout=30000)
-                page.wait_for_timeout(2000)
+            urun_linkleri = page.evaluate('''() => {
+                let links = document.querySelectorAll("a.product-card");
+                return Array.from(links).map(a => a.href).filter(h => h.includes("trendyol.com"));
+            }''')
+            
+            page.close()
+            
+            if not urun_linkleri:
+                print(f"  ⚠️ Liste sayfasında ürün linki bulunamadı.")
+                failed_col.update_one(
+                    {"_id": item["_id"]},
+                    {"$set": {"cozuldu": True, "son_hata_sebebi": "link_yok", "cozulme_tarihi": simdi}}
+                )
+                continue
+            
+            print(f"  ✅ {len(urun_linkleri)} ürün linki bulundu, kazınıyor...")
+            
+            for urun_url in urun_linkleri:
+                deneme_sayisi += 1
+                data, status = get_product_data_with_playwright(context, urun_url) 
                 
-                # Sayfadaki 24 ürün linkini topla
-                urun_linkleri = page.evaluate('''() => {
-                    let links = document.querySelectorAll("a.product-card");
-                    return Array.from(links).map(a => a.href).filter(h => h.includes("trendyol.com"));
-                }''')
-                
-                page.close()
-                
-                if not urun_linkleri:
-                    print(f"  ⚠️ Liste sayfasında ürün linki bulunamadı.")
-                    failed_col.update_one(
-                        {"_id": item["_id"]},
-                        {"$set": {"cozuldu": True, "son_hata_sebebi": "link_yok", "cozulme_tarihi": simdi}}
+                if data and data.get("price"):
+                    products_col.update_one(
+                        {"url": urun_url},
+                        {"$set": {
+                            "title": data["title"], "category": data["category"],
+                            "images": data["images"], "explanation": data["explanation"],
+                            "attributes": data["attributes"], "last_seen": simdi,
+                            "scrape_method": "playwright"
+                        }},
+                        upsert=True
                     )
-                    continue
-                
-                print(f"  ✅ {len(urun_linkleri)} ürün linki bulundu, kazınıyor...")
-                
-                for urun_url in urun_linkleri:
-                    deneme_sayisi += 1
-                    data, status = get_product_data_with_playwright(context, urun_url) # 
-                    
-                    if data and data.get("price"):
-                        products_col.update_one(
-                            {"url": urun_url},
-                            {"$set": {
-                                "title": data["title"], "category": data["category"],
-                                "images": data["images"], "explanation": data["explanation"],
-                                "attributes": data["attributes"], "last_seen": simdi,
-                                "scrape_method": "playwright"
-                            }},
-                            upsert=True
-                        )
-                        prices_col.update_one(
-                            {"url": urun_url, "date": today_str},
-                            {"$set": {
-                                "price": data["price"], "evaluation": data["evaluation"],
-                                "evaluation_len": data["evaluation_len"]
-                            }},
-                            upsert=True
-                        )
-                        # failed_urls'deki ürün hatasını da çözdü işaretle
-                        failed_col.update_one(
-                            {"url": urun_url},
-                            {"$set": {"cozuldu": True, "cozulme_tarihi": simdi}},
-                        )
-                        basarili_sayisi += 1
-                        print(f"    🟢 {data['title'][:35]}... | {data['price']} TL")
-                    else:
-                        print(f"    🔴 {status} | {urun_url[-40:]}")
-                
-                # Liste sayfasını çözüldü işaretle
-                failed_col.update_one(
-                    {"_id": item["_id"]},
-                    {"$set": {"cozuldu": True, "cozulme_tarihi": simdi}}
-                )
-                
-            except Exception as e:
-                print(f"  ❌ Liste sayfası hatası: {str(e)[:60]}")
-                failed_col.update_one(
-                    {"_id": item["_id"]},
-                    {"$inc": {"playwright_deneme": 1}, "$set": {"son_hata_sebebi": str(e)[:60]}}
-                )
-        
-        update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi)
+                    prices_col.update_one(
+                        {"url": urun_url, "date": today_str},
+                        {"$set": {
+                            "price": data["price"], "evaluation": data["evaluation"],
+                            "evaluation_len": data["evaluation_len"]
+                        }},
+                        upsert=True
+                    )
+                    failed_col.update_one(
+                        {"url": urun_url},
+                        {"$set": {"cozuldu": True, "cozulme_tarihi": simdi}},
+                    )
+                    basarili_sayisi += 1
+                    print(f"    🟢 {data['title'][:35]}... | {data['price']} TL")
+                else:
+                    print(f"    🔴 {status} | {urun_url[-40:]}")
+            
+            failed_col.update_one(
+                {"_id": item["_id"]},
+                {"$set": {"cozuldu": True, "cozulme_tarihi": simdi}}
+            )
+            
+        except Exception as e:
+            print(f"  ❌ Liste sayfası hatası: {str(e)[:60]}")
+            failed_col.update_one(
+                {"_id": item["_id"]},
+                {"$inc": {"playwright_deneme": 1}, "$set": {"son_hata_sebebi": str(e)[:60]}}
+            )
+    
+    update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi)
+    return True
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NeuraNovaV Playwright İşçisi")
@@ -374,45 +382,55 @@ if __name__ == "__main__":
         print(f"   job_id verilmedi — istatistikler jobs koleksiyonuna yazılmayacak")
     
     try:
-        with sync_playwright() as p:
-            print("🔄 [SİSTEM] Tarayıcı Anti-Leak ve Endüstriyel modda başlatılıyor...")
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-dev-shm-usage",             # Linux RAM kilitlenmesini önler
-                    "--js-flags=--max-old-space-size=512", # RAM limitini 512MB'a kilitler
-                    "--disk-cache-size=1",                 # Disk %100 sorununu çözer (Diske yazmayı engeller)
-                    "--disable-disk-cache",
-                    "--disable-crash-reporter",
-                    "--disable-logging",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-gpu",
-                    "--disable-software-rasterizer",
-                    "--disable-background-networking",
-                    "--disable-extensions",
-                    "--disable-default-apps",
-                    "--blink-settings=imagesEnabled=false" # Görüntüleri indirmez, ağ ve RAM tasarrufu sağlar
-                ]
-            )
-            context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36")
-            
-            # DİKKAT: Burada tekil bir 'page' oluşturmuyoruz! 
-            # Context'i gönderiyoruz ki fonksiyonlar içeride kendi sekmelerini açıp kapatabilsin.
-            
-            if args.gorev == 'hata_coz':
-                mod1_kuyruk_temizle(context, args.job_id)
-            elif args.gorev == 'fiyat_guncelle':
-                mod2_fiyat_guncelle(context, args.job_id)
-            elif args.gorev == 'liste_kurtar':
-                mod3_liste_kurtar(context, args.job_id)
+        # ASIL BÜYÜ BURADA: Modüller True döndürdüğü sürece tarayıcı açılıp kapanacak
+        while True:
+            with sync_playwright() as p:
+                print("🔄 [SİSTEM] Tarayıcı Anti-Leak ve Endüstriyel modda başlatılıyor...")
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--disable-dev-shm-usage",             
+                        "--js-flags=--max-old-space-size=512", 
+                        "--disk-cache-size=1",                 
+                        "--disable-disk-cache",
+                        "--disable-crash-reporter",
+                        "--disable-logging",
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-gpu",
+                        "--disable-software-rasterizer",
+                        "--disable-background-networking",
+                        "--disable-extensions",
+                        "--disable-default-apps",
+                        "--blink-settings=imagesEnabled=false" 
+                    ]
+                )
+                context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36")
                 
-            context.close()
-            browser.close()
-            
-            # RAM'de kalan Python çöplerini zorla temizle
+                devam_edelim_mi = False
+                
+                if args.gorev == 'hata_coz':
+                    devam_edelim_mi = mod1_kuyruk_temizle(context, args.job_id)
+                elif args.gorev == 'fiyat_guncelle':
+                    devam_edelim_mi = mod2_fiyat_guncelle(context, args.job_id)
+                elif args.gorev == 'liste_kurtar':
+                    devam_edelim_mi = mod3_liste_kurtar(context, args.job_id)
+                    
+                # Sadece context'i değil, browser'ı da Node.js üzerinden sonlandırıyoruz
+                context.close()
+                browser.close()
+                
+            # 'with' bloğundan çıktığımız için Playwright süreci tamamen ölüyor
+            # gc.collect() ile Python'da kalan artıkları temizleyip OS'ye RAM'i geri veriyoruz
             gc.collect()
             print("🧹 [SİSTEM] Tarayıcı tamamen imha edildi. RAM ve Disk OS'e iade edildi.")
+            
+            # Eğer fonksiyonlar veritabanında işlenecek veri kalmadı deyip False döndürdüyse ana döngüyü bitir.
+            if not devam_edelim_mi:
+                print(f"\n🎉 Tüm {args.gorev.upper()} işlemleri tamamlandı! Bot başarıyla kapanıyor.")
+                break
+                
+            time.sleep(1) # Tarayıcının yeni oturumunu açmadan önce işlemciye 1 saniye nefes verelim
             
     except KeyboardInterrupt:
         print("\n🛑 Kullanıcı tarafından durduruldu.")
