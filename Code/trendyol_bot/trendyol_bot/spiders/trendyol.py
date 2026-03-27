@@ -54,6 +54,7 @@ class TrendyolSpider(scrapy.Spider):
         self._visited_col.create_index("page", background=True)
         self._throttle_sayac = 0  
         self._ram_sayac = 0
+        self._ziyaret_cache = {"sayfa": -1, "kategoriler": set()}
         self._datetime = datetime
         self._timezone = timezone
         
@@ -155,9 +156,22 @@ class TrendyolSpider(scrapy.Spider):
         istek_sayisi = 0
         atlanan_sayisi = 0
         
+        # Başlangıç sayfası için ziyaret cache'ini tek sorguda yükle
+        self._ziyaret_cache = {
+            "sayfa": baslangic_sayfa,
+            "kategoriler": set(
+                doc["category"]
+                for doc in self._visited_col.find(
+                    {"page": baslangic_sayfa, "status": "done"},
+                    {"category": 1, "_id": 0}
+                )
+            )
+        }
+        
         for category in self.categories:
             page = baslangic_sayfa
-            if self._is_visited(category, page):
+            if category in self._ziyaret_cache["kategoriler"]:
+
                 atlanan_sayisi += 1
                 continue
             url = f"https://www.trendyol.com/{category}&pi={page}"
@@ -213,6 +227,8 @@ class TrendyolSpider(scrapy.Spider):
         
         category_name = response.meta.get("category_name")
         current_page = response.meta.get("page_number", 1)
+        
+
         
         links = response.css("a.product-card::attr(href)").getall()
         
