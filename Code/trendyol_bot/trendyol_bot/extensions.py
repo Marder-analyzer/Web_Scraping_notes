@@ -546,7 +546,7 @@ class LiveProxyUpdater:
                 if success_count == 0 and ban_count >= 5:
                     dinamik_limit = 5       # hiç başarı yok, hızlı emekli
                 elif oran >= 0.70:
-                    dinamik_limit = 10000     # iyi proxy, uzun çalışsın
+                    dinamik_limit = 600     # iyi proxy, uzun çalışsın
                 elif oran >= 0.40:
                     dinamik_limit = 100     # orta proxy
                 else:

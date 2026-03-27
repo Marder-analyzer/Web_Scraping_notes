@@ -46,8 +46,12 @@ class TrendyolSpider(scrapy.Spider):
         self.start_time = time.time()
         self.scraped_count = 0
         self._mongo_client = pymongo.MongoClient("mongodb://localhost:27017/")
-        self._failed_col = self._mongo_client["neuranovav_db"]["failed_urls"]
-        self._cmd_col = self._mongo_client["neuranovav_db"]["bot_commands"]  
+        self._db = self._mongo_client["neuranovav_db"]
+        self._failed_col = self._db["failed_urls"]
+        self._cmd_col = self._db["bot_commands"]
+        self._visited_col = self._db["visited_pages"]
+        self._visited_col.create_index("key", unique=True, background=True)
+        self._visited_col.create_index("page", background=True)
         self._throttle_sayac = 0  
         self._ram_sayac = 0
         self._datetime = datetime
@@ -84,6 +88,41 @@ class TrendyolSpider(scrapy.Spider):
             "Sec-Fetch-User": "?1",
             "Upgrade-Insecure-Requests": "1"
         }
+    
+    @staticmethod
+    def _page_key(category: str, page: int) -> str:
+        safe = re.sub(r'[.$]', '_', category)
+        return f"{safe}__{page}"
+
+    def _is_visited(self, category: str, page: int) -> bool:
+        key = self._page_key(category, page)
+        return self._visited_col.count_documents({"key": key, "status": "done"}, limit=1) > 0
+
+    def _mark_visited(self, category: str, page: int):
+        key = self._page_key(category, page)
+        try:
+            self._visited_col.update_one(
+                {"key": key},
+                {"$set": {
+                    "category": category,
+                    "page": page,
+                    "status": "done",
+                    "ts": datetime.now(timezone.utc),
+                }},
+                upsert=True
+            )
+        except Exception as e:
+            self.logger.warning(f"[Spider] visited_pages yazma hatasi: {e}")
+
+    def _tamamlanan_max_sayfa(self) -> int:
+        toplam_kategori = len(self.categories)
+        if toplam_kategori == 0:
+            return 0
+        for sayfa in range(1, 10001):
+            biten = self._visited_col.count_documents({"page": sayfa, "status": "done"})
+            if biten < toplam_kategori * 0.95:
+                return sayfa - 1
+        return 0
         
     #linkleri çekmek için ilk ayarlamaları yapacağız. JavaScript ile çalışan bir site olduğu için Playwright kullanarak sayfanın tam olarak yüklenmesini sağlayacağız.
     def start_requests(self):
@@ -96,34 +135,45 @@ class TrendyolSpider(scrapy.Spider):
             # Şimdilik 1 tam sayfa (24 ürün) olarak baz alıyoruz. İstediğin gibi değiştirebilirsin.
             tahmini_urun_hedefi = toplam_kombinasyon * 24 
             
-            import pymongo
-            client = pymongo.MongoClient("mongodb://localhost:27017/")
-            db = client["neuranovav_db"]
             
             # En son başlatılan oturumu (Job) bul ve tahmini ürün hedefini kaydet
-            latest_job = db.jobs.find_one(sort=[("start_time", pymongo.DESCENDING)])
+            latest_job = self._db.jobs.find_one(sort=[("start_time", pymongo.DESCENDING)])
+
             if latest_job:
-                db.jobs.update_one(
+                self._db.jobs.update_one(
                     {"_id": latest_job["_id"]},
                     {"$set": {"total_target_urls": tahmini_urun_hedefi}}
                 )
         except Exception as e:
             self.logger.warning(f"Hedef hesaplanamadı/yazılamadı: {e}")
         
+        max_biten_sayfa = self._tamamlanan_max_sayfa()
+        baslangic_sayfa = max_biten_sayfa + 1
+        self.logger.info(
+            f"[Spider] Devam noktasi | max_biten_sayfa={max_biten_sayfa} | baslangic_sayfa={baslangic_sayfa}"
+        )
+        istek_sayisi = 0
+        atlanan_sayisi = 0
+        
         for category in self.categories:
-            # pi=1 (1. sayfa) parametresi ile başlıyoruz
-            url = f"https://www.trendyol.com/{category}&pi=1"
+            page = baslangic_sayfa
+            if self._is_visited(category, page):
+                atlanan_sayisi += 1
+                continue
+            url = f"https://www.trendyol.com/{category}&pi={page}"
             yield scrapy.Request(
                 url=url,
                 headers=self._headers(),
-                meta={
-                    "category_name": category, # Kategori adını diğer fonksiyona taşıyoruz
-                    "page_number": 1           # Sayfa numarasını takip ediyoruz
-                },
+                meta={"category_name": category, "page_number": page},
                 callback=self.parse,
                 dont_filter=False,
                 errback=self.handle_error
             )
+            istek_sayisi += 1
+
+        self.logger.info(
+            f"[Spider] Istekler uretildi | gonderilen={istek_sayisi} | atlanan={atlanan_sayisi}"
+        )
     
     # bütün linkleri çekme işlemi ve dağıtma işlemini yaptığımız yer.
     def parse(self, response):
@@ -168,6 +218,7 @@ class TrendyolSpider(scrapy.Spider):
         
         if not links:
             self.logger.info(f"==> [SAYFA {current_page}] Bitti (link yok) | {category_name}")
+            self._mark_visited(category_name, current_page)
             return
 
         self.logger.info(f"==> [SAYFA {current_page}] Tamamlandi | {len(links)} Urun Havuza Atildi | {category_name}")
@@ -188,7 +239,8 @@ class TrendyolSpider(scrapy.Spider):
                 callback=self.parse_items,
                 errback=self.handle_error
             )
-        
+        self._mark_visited(category_name, current_page)
+
         next_page = current_page + 1
         
         if next_page <= self.MAX_SAYFA_LIMITI:
