@@ -152,6 +152,9 @@ son_ram_maili = 0
 son_acil_kapatma = 0
 son_heartbeat_maili = 0
 son_heartbeat_durumu = "normal"
+son_cpu_maili = 0
+son_cpu_durdurma = 0
+son_cpu_durumu = "normal"  # "normal", "sicak", "kritik"
 
 def check_ram_and_alert():
     global son_ram_maili, son_acil_kapatma
@@ -288,6 +291,107 @@ def check_ram_and_alert():
                 server.sendmail(MAIL_SENDER, target_mail, msg.as_string())
         except Exception as e:
             print(f"⚠️ Acil kapatma maili gönderilemedi: {e}")
+
+def check_cpu_temp():
+    global son_cpu_maili, son_cpu_durdurma, son_cpu_durumu
+
+    try:
+        # thermal_zone'dan sıcaklık oku (sensors'dan daha hızlı)
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            sicaklik = int(f.read().strip()) / 1000
+    except:
+        return  # okuyamazsa pas geç
+
+    # --- KADEME 1: 80°C — Concurrent düşür ---
+    if sicaklik > 80:
+        try:
+            cmd_col.update_one(
+                {"bot_id": "ana_bot"},
+                {"$set": {"cpu_temp": sicaklik}}
+            )
+            hedef = 8 if sicaklik < 88 else (4 if sicaklik < 93 else 2)
+            mevcut = cmd_col.find_one({"bot_id": "ram_throttle"})
+            if mevcut and mevcut.get("concurrent", 16) > hedef:
+                cmd_col.update_one(
+                    {"bot_id": "ram_throttle"},
+                    {"$set": {
+                        "concurrent": hedef,
+                        "cpu_kaynakli": True,
+                        "updated_at": datetime.now(timezone.utc)
+                    }}
+                )
+                print(f"🌡️ CPU Fren: {sicaklik:.1f}°C → CONCURRENT={hedef}")
+        except:
+            pass
+
+    # --- KADEME 2: 88°C — Mail at ---
+    if sicaklik > 88 and (time.time() - son_cpu_maili > 3600):
+        son_cpu_maili = time.time()
+        son_cpu_durumu = "sicak"
+        print(f"🌡️ CPU {sicaklik:.1f}°C — Uyarı maili atılıyor...")
+        try:
+            with open("saved_mails.json", "r") as f:
+                target_mail = json.load(f)[0]
+            html_body = f"""<html><body style="font-family:Arial,sans-serif;padding:20px">
+            <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px;border-left:8px solid #f57c00">
+                <h2 style="color:#f57c00">🌡️ CPU SICAKLIK UYARISI: {sicaklik:.1f}°C</h2>
+                <p>CPU sıcaklığı <b>{sicaklik:.1f}°C</b> seviyesine ulaştı.</p>
+                <p>Sistem otomatik olarak hızı düşürdü. %93'ü geçerse bot otomatik durdurulacak.</p>
+            </div></body></html>"""
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = f"🌡️ NeuraNovaV CPU Uyarısı: {sicaklik:.1f}°C"
+            msg["From"] = f"NeuraNovaV Komuta <{MAIL_SENDER}>"
+            msg["To"] = target_mail
+            msg.attach(MIMEText(html_body, "html"))
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(MAIL_SENDER, MAIL_APP_PASS)
+                server.sendmail(MAIL_SENDER, target_mail, msg.as_string())
+        except Exception as e:
+            print(f"⚠️ CPU uyarı maili gönderilemedi: {e}")
+
+    # --- KADEME 3: 93°C — Botu durdur, 5 dk soğut, yeniden başlat ---
+    if sicaklik > 93 and (time.time() - son_cpu_durdurma > 600):
+        son_cpu_durdurma = time.time()
+        son_cpu_durumu = "kritik"
+        print(f"🚨 CPU KRİTİK: {sicaklik:.1f}°C! Bot durduruluyor, 5 dk soğuma molası...")
+
+        kayit = cmd_col.find_one({"bot_id": "ana_bot", "is_running": True})
+        if kayit and kayit.get("pid"):
+            kill_process_tree(kayit["pid"])
+            cmd_col.update_one(
+                {"bot_id": "ana_bot"},
+                {"$set": {
+                    "is_running": False,
+                    "status": "cpu_cooling",
+                    "pid": None,
+                    "cpu_cooling_bitis": time.time() + 300  # 5 dk sonra yeniden başlat
+                }}
+            )
+            if "ana_bot" in active_processes:
+                del active_processes["ana_bot"]
+            print("🛑 Bot durduruldu, 5 dk soğuma molası başladı...")
+
+        # Acil mail
+        try:
+            with open("saved_mails.json", "r") as f:
+                target_mail = json.load(f)[0]
+            html_body = f"""<html><body style="font-family:Arial,sans-serif;padding:20px">
+            <div style="max-width:500px;margin:auto;background:white;border-radius:12px;padding:24px;border-left:8px solid #c62828">
+                <h2 style="color:#c62828">🚨 CPU KRİTİK SICAKLIK: {sicaklik:.1f}°C</h2>
+                <p>CPU <b>{sicaklik:.1f}°C</b>'ye ulaştı. Bot otomatik durduruldu.</p>
+                <p>5 dakika soğuma molası verildi. Sıcaklık düşerse otomatik yeniden başlayacak.</p>
+            </div></body></html>"""
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = f"🚨 NeuraNovaV KRİTİK CPU: {sicaklik:.1f}°C"
+            msg["From"] = f"NeuraNovaV Komuta <{MAIL_SENDER}>"
+            msg["To"] = target_mail
+            msg.attach(MIMEText(html_body, "html"))
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(MAIL_SENDER, MAIL_APP_PASS)
+                server.sendmail(MAIL_SENDER, target_mail, msg.as_string())
+        except Exception as e:
+            print(f"⚠️ Kritik CPU maili gönderilemedi: {e}")
+
 
 print("💂‍♂️ NeuraNovaV Bot Manager (Komutan) Başlatıldı! Emirler bekleniyor...")
 
@@ -451,6 +555,36 @@ while True:
         
         if time.time() - son_ram_kontrol > 30:
             check_ram_and_alert()
+            check_cpu_temp()
+            
+            try:
+                cooling = cmd_col.find_one({"bot_id": "ana_bot", "status": "cpu_cooling"})
+                if cooling and cooling.get("cpu_cooling_bitis"):
+                    if time.time() > cooling["cpu_cooling_bitis"]:
+                        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+                            yeni_sicaklik = int(f.read().strip()) / 1000
+                        if yeni_sicaklik < 75:
+                            cmd_col.update_one(
+                                {"bot_id": "ana_bot"},
+                                {"$set": {
+                                    "action": "start",
+                                    "status": "pending",
+                                    "cpu_cooling_bitis": None
+                                }}
+                            )
+                            son_cpu_durumu = "normal"
+                            print(f"✅ CPU {yeni_sicaklik:.1f}°C — Bot yeniden başlatılıyor...")
+                        else:
+                            # Hala sıcak, 2 dk daha bekle
+                            cmd_col.update_one(
+                                {"bot_id": "ana_bot"},
+                                {"$set": {"cpu_cooling_bitis": time.time() + 120}}
+                            )
+                            print(f"⚠️ CPU hala {yeni_sicaklik:.1f}°C — 2 dk daha bekleniyor.")
+            except Exception:
+                pass
+                        
+            
             try:
                 latest_job = db.jobs.find_one({"status": "Running"}, sort=[("start_time", -1)])
                 if latest_job:
