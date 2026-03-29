@@ -981,21 +981,14 @@ if latest_job:
 
     st.markdown("---")
     
-    # 1. BÖLÜM: SAATLİK HIZ GRAFİĞİ (FAZ 4 - Madde 15 & 16)
+    # 1. BÖLÜM: SAATLİK HIZ GRAFİĞİ
     st.subheader("⏱️ Saat Bazlı Tarama Performansı")
-    # pipelines (2).py'den gelen veriyi okur
-    hourly_data = latest_job.get("hourly_stats", [])
-    if hourly_data:
-        df_hourly = pd.DataFrame(hourly_data)[["saat", "islenen", "hiz_urun_dk"]]
-        df_hourly.columns = ["Saat", "İşlenen Ürün", "Hız (Ürün/Dk)"]
-        
-        # Hız grafiğini çizgi olarak gösterelim 
+    try:
         sinir = datetime.now(timezone.utc) - timedelta(hours=48)
         tum_jobs = list(db.jobs.find(
             {"start_time": {"$gte": sinir}},
             {"hourly_stats": 1, "start_time": 1}
         ).sort("start_time", 1))
-
         tum_satirlar = []
         for job in tum_jobs:
             job_start = job.get("start_time")
@@ -1017,11 +1010,8 @@ if latest_job:
                     })
                 except:
                     pass
-
         if tum_satirlar:
             df_hourly2 = pd.DataFrame(tum_satirlar).sort_values("Zaman").drop_duplicates("Zaman")
-
-            # Hız değişim açıklamaları
             annotations = []
             hizlar = df_hourly2["Hız (Ürün/Dk)"].tolist()
             zamanlar = df_hourly2["Zaman"].tolist()
@@ -1044,7 +1034,6 @@ if latest_job:
                     except:
                         neden = "📈 Hız yükseldi"
                     annotations.append({"zaman": zamanlar[i], "hiz": hizlar[i], "neden": neden})
-
             fig_speed = go.Figure()
             fig_speed.add_trace(go.Scatter(
                 x=df_hourly2["Zaman"], y=df_hourly2["Hız (Ürün/Dk)"],
@@ -1063,8 +1052,10 @@ if latest_job:
                 hovermode="x unified"
             )
             st.plotly_chart(fig_speed, use_container_width=True)
-    else:
-        st.info("Saatlik performans verisi henüz oluşmadı (Botun en az 1 saat çalışması lazım).")
+        else:
+            st.info("Saatlik performans verisi henüz oluşmadı (Botun en az 1 saat çalışması lazım).")
+    except Exception as e:
+        st.error(f"Grafik hatası: {e}")
 
     st.markdown("---")
 
