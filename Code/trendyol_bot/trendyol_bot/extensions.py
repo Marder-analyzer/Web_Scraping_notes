@@ -282,6 +282,7 @@ class LiveProxyUpdater:
                 active = list(mw_ref.proxies.proxies.keys())
             else:
                 active = ordered
+            active = self._filter_retired(active)    
             with open("proxies.txt", "w", encoding="utf-8") as f:
                 f.write("\n".join(active) + "\n")
         except Exception as e:

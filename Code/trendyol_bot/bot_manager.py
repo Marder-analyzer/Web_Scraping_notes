@@ -554,6 +554,7 @@ while True:
     try:
         
         if time.time() - son_ram_kontrol > 30:
+            
             check_ram_and_alert()
             check_cpu_temp()
             

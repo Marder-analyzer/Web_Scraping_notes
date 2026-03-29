@@ -1,0 +1,12 @@
+[Unit]
+Description=NIC Watchdog enp7s0 otomatik reset
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStart=/usr/local/bin/nic-watchdog.sh
+
+[Install]
+WantedBy=multi-user.target
