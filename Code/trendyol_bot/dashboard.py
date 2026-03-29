@@ -731,6 +731,30 @@ if latest_job:
     n2.metric(label="🔧 NIC Watchdog", value=watchdog_yazi)
     n3.metric(label="🔁 Otomatik Reset", value=f"{reset_sayisi} kez")
     n4.metric(label="🕐 Son Reset", value=son_reset)
+    
+    try:
+        termal = cmd_col.find_one({"bot_id": "termal_durum"})
+        if termal:
+            cpu_t = termal.get("cpu_temp", 0)
+            ssd_t = termal.get("ssd_temp", 0)
+            seviye = termal.get("seviye", "yesil")
+            emojiler = {
+                "yesil": "🟢 YEŞİL", "sari": "🟡 SARI",
+                "turuncu": "🟠 TURUNCU", "kirmizi": "🔴 KIRMIZI", "siyah": "⚫ SİYAH"
+            }
+            t1, t2, t3 = st.columns(3)
+            t1.metric(label="🌡️ CPU Sıcaklığı",
+                    value=f"{cpu_t}°C",
+                    delta="Normal" if cpu_t < 75 else "Yüksek",
+                    delta_color="normal" if cpu_t < 75 else "inverse")
+            t2.metric(label="💾 SSD Controller",
+                    value=f"{ssd_t}°C",
+                    delta="Normal" if ssd_t < 70 else "Yüksek",
+                    delta_color="normal" if ssd_t < 70 else "inverse")
+            t3.metric(label="🛡️ Termal Durum",
+                    value=emojiler.get(seviye, seviye))
+    except:
+        pass
         
     st.markdown("---")
 

@@ -193,6 +193,26 @@ def mod1_kuyruk_temizle(context, job_id):
     deneme_sayisi = len(bekleyenler) 
     
     for item in bekleyenler:
+         # ── TERMAL KONTROL ──
+        try:
+            termal = cmd_col_pw.find_one({"bot_id": "termal_durum"})
+            if termal:
+                seviye = termal.get("seviye", "yesil")
+                if seviye == "siyah":
+                    print(f"⚫ Termal SIYAH — 5 dk bekleniyor...")
+                    time.sleep(300)
+                    continue
+                elif seviye == "kirmizi":
+                    print(f"🔴 Termal KIRMIZI — 2 dk bekleniyor...")
+                    time.sleep(120)
+                    continue
+                elif seviye == "turuncu":
+                    print(f"🟠 Termal TURUNCU — 1 dk bekleniyor...")
+                    time.sleep(60)
+                    continue
+        except:
+            pass
+        # ── TERMAL KONTROL SONU ──
         # ── RAM KONTROL ──
         asil_limit, proje_yuzde, limit = check_playwright_ram()
         if asil_limit:
@@ -256,6 +276,27 @@ def mod2_fiyat_guncelle(context, job_id):
     deneme_sayisi = len(guncellenecekler) 
     
     for item in guncellenecekler:
+         # ── TERMAL KONTROL ──
+        try:
+            termal = cmd_col_pw.find_one({"bot_id": "termal_durum"})
+            if termal:
+                seviye = termal.get("seviye", "yesil")
+                if seviye == "siyah":
+                    print(f"⚫ Termal SIYAH — 5 dk bekleniyor...")
+                    time.sleep(300)
+                    continue
+                elif seviye == "kirmizi":
+                    print(f"🔴 Termal KIRMIZI — 2 dk bekleniyor...")
+                    time.sleep(120)
+                    continue
+                elif seviye == "turuncu":
+                    print(f"🟠 Termal TURUNCU — 1 dk bekleniyor...")
+                    time.sleep(60)
+                    continue
+        except:
+            pass
+        # ── TERMAL KONTROL SONU ──
+        
         url = item["url"]
         data, status = get_product_data_with_playwright(context, url)
         
@@ -293,6 +334,28 @@ def mod3_liste_kurtar(context, job_id):
     deneme_sayisi = 0
     
     for item in bekleyenler:
+        
+         # ── TERMAL KONTROL ──
+        try:
+            termal = cmd_col_pw.find_one({"bot_id": "termal_durum"})
+            if termal:
+                seviye = termal.get("seviye", "yesil")
+                if seviye == "siyah":
+                    print(f"⚫ Termal SIYAH — 5 dk bekleniyor...")
+                    time.sleep(300)
+                    continue
+                elif seviye == "kirmizi":
+                    print(f"🔴 Termal KIRMIZI — 2 dk bekleniyor...")
+                    time.sleep(120)
+                    continue
+                elif seviye == "turuncu":
+                    print(f"🟠 Termal TURUNCU — 1 dk bekleniyor...")
+                    time.sleep(60)
+                    continue
+        except:
+            pass
+        # ── TERMAL KONTROL SONU ──
+        
         liste_url = item["url"]
         print(f"\n  📋 Liste sayfasına giriliyor: {liste_url[-60:]}")
         
