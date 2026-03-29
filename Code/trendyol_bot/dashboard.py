@@ -556,6 +556,74 @@ default_mail = default_mail[0] if default_mail else None
 # ─────────────────────────────────────────────
 latest_job = db.jobs.find_one(sort=[("start_time", pymongo.DESCENDING)])
 
+# ── SYSTEM STATS (her zaman görünür) ──
+aktif_kayitlar = list(cmd_col.find({"is_running": True}))
+gercek_calisan_sayisi = 0
+for bot in aktif_kayitlar:
+    pid = bot.get("pid")
+    if pid and psutil.pid_exists(pid):
+        gercek_calisan_sayisi += 1
+    else:
+        cmd_col.update_one(
+            {"_id": bot["_id"]},
+            {"$set": {"is_running": False, "pid": None, "status": "zombie_cleaned"}}
+        )
+ram = psutil.virtual_memory()
+ram_yuzde = ram.percent
+ram_renk = "🔴" if ram_yuzde > 85.0 else "🟡" if ram_yuzde > 70.0 else "🟢"
+bot_ram_mb = get_bot_ram_usage_mb()
+toplam_ram_mb = psutil.virtual_memory().total / (1024 * 1024)
+bot_ram_yuzde = (bot_ram_mb / toplam_ram_mb) * 100
+try:
+    urllib.request.urlopen("http://clients3.google.com/generate_204", timeout=3)
+    internet_ok = True
+except:
+    internet_ok = False
+internet_renk = "🟢" if internet_ok else "🔴"
+internet_yazi = "Bağlı" if internet_ok else "KOPUK"
+try:
+    if os.name == 'nt':
+        watchdog_yazi = "Sadece Linux'ta"
+    else:
+        watchdog_aktif = subprocess.run(
+            ["systemctl", "is-active", "nic-watchdog"],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip() == "active"
+        watchdog_yazi = "Çalışıyor ✅" if watchdog_aktif else "Durdu ❌"
+except:
+    watchdog_yazi = "Bilinmiyor"
+try:
+    if os.name == 'nt':
+        reset_sayisi = 0
+        son_reset = "Sadece Linux'ta"
+    else:
+        with open("/var/log/nic-watchdog.log") as f:
+            satirlar = f.readlines()[-200:]
+        reset_sayisi = sum(1 for s in satirlar if "resetleniyor" in s)
+        son_reset = next(
+            (s.strip()[:19] for s in reversed(satirlar) if "Reset tamamlandi" in s),
+            "Hiç reset yok"
+        )
+except:
+    reset_sayisi = 0
+    son_reset = "Log yok"
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric(label="🕵️ Aktif Botlar", value=gercek_calisan_sayisi)
+with col2:
+    st.metric(label=f"{ram_renk} Sistem Toplam RAM", value=f"%{ram_yuzde:.1f}")
+with col3:
+    st.metric(label="🤖 Projenin RAM Tüketimi", value=f"{bot_ram_mb:.1f} MB",
+              delta=f"Sistemin %{bot_ram_yuzde:.1f}'i")
+st.markdown("##### 🌐 Ağ & Sistem Sağlığı")
+n1, n2, n3, n4 = st.columns(4)
+n1.metric(label="🌐 İnternet", value=f"{internet_renk} {internet_yazi}")
+n2.metric(label="🔧 NIC Watchdog", value=watchdog_yazi)
+n3.metric(label="🔁 Otomatik Reset", value=f"{reset_sayisi} kez")
+n4.metric(label="🕐 Son Reset", value=son_reset)
+st.markdown("---")
+
 if latest_job:
     stats      = latest_job.get("stats", {})
     job_id     = latest_job.get("job_id", "")
@@ -659,113 +727,7 @@ if latest_job:
             st.caption(b_stat)
     st.write("")
     
-    st.markdown("---")
-    # 1. GERÇEK ÇALIŞAN BOT SAYACINI HESAPLA
-    aktif_kayitlar = list(cmd_col.find({"is_running": True}))
-    gercek_calisan_sayisi = 0
-
-    for bot in aktif_kayitlar:
-        pid = bot.get("pid")
-        # İşletim sistemine soruyoruz: Bu PID gerçekten yaşıyor mu?
-        if pid and psutil.pid_exists(pid):
-            gercek_calisan_sayisi += 1
-        else:
-            # Zombi temizliği: PID ölmüş ama DB'de açık kalmışsa kapat
-            cmd_col.update_one(
-                {"_id": bot["_id"]}, 
-                {"$set": {"is_running": False, "pid": None, "status": "zombie_cleaned"}}
-            )
-    ram = psutil.virtual_memory()
-    ram_yuzde = ram.percent
-    ram_renk = "🔴" if ram_yuzde > 85.0 else "🟡" if ram_yuzde > 70.0 else "🟢"
     
-    # Sadece Projenin RAM'i
-    bot_ram_mb = get_bot_ram_usage_mb()
-    toplam_ram_mb = psutil.virtual_memory().total / (1024 * 1024)
-    bot_ram_yuzde = (bot_ram_mb / toplam_ram_mb) * 100
-
-    # İnternet ve NIC watchdog durumu
-    try:
-        import subprocess
-        try:
-            urllib.request.urlopen("http://clients3.google.com/generate_204", timeout=3)
-            internet_ok = True
-        except:
-            internet_ok = False
-        internet_renk = "🟢" if internet_ok else "🔴"
-        internet_yazi = "Bağlı" if internet_ok else "KOPUK"
-    except:
-        internet_renk = "⚪"
-        internet_yazi = "Bilinmiyor"
-
-    try:
-        watchdog_aktif = subprocess.run(
-            ["systemctl", "is-active", "nic-watchdog"],
-            capture_output=True, text=True, timeout=5
-        ).stdout.strip() == "active"
-        watchdog_yazi = "Çalışıyor ✅" if watchdog_aktif else "Durdu ❌"
-    except:
-        watchdog_yazi = "Bilinmiyor"
-
-    try:
-        with open("/var/log/nic-watchdog.log") as f:
-            satirlar = f.readlines()[-200:]  # ← sadece son 200 satır
-        reset_sayisi = sum(1 for s in satirlar if "resetleniyor" in s)
-        son_reset = next(
-            (s.strip()[:19] for s in reversed(satirlar) if "Reset tamamlandi" in s),
-            "Hiç reset yok"
-        )
-    except:
-        reset_sayisi = 0
-        son_reset = "Log yok"
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric(label="🕵️ Aktif Botlar", value=gercek_calisan_sayisi)
-    with col2:
-        st.metric(label=f"{ram_renk} Sistem Toplam RAM", value=f"%{ram_yuzde:.1f}")
-    with col3:
-        st.metric(
-            label="🤖 Projenin RAM Tüketimi",
-            value=f"{bot_ram_mb:.1f} MB",
-            delta=f"Sistemin %{bot_ram_yuzde:.1f}'i"
-        )
-
-    # Ağ durumu — yeni satır
-    st.markdown("##### 🌐 Ağ & Sistem Sağlığı")
-    n1, n2, n3, n4 = st.columns(4)
-    n1.metric(label="🌐 İnternet", value=f"{internet_renk} {internet_yazi}")
-    n2.metric(label="🔧 NIC Watchdog", value=watchdog_yazi)
-    n3.metric(label="🔁 Otomatik Reset", value=f"{reset_sayisi} kez")
-    n4.metric(label="🕐 Son Reset", value=son_reset)
-    
-    try:
-        termal = cmd_col.find_one({"bot_id": "termal_durum"})
-        if termal:
-            cpu_t = termal.get("cpu_temp", 0)
-            ssd_t = termal.get("ssd_temp", 0)
-            seviye = termal.get("seviye", "yesil")
-            emojiler = {
-                "yesil": "🟢 YEŞİL", "sari": "🟡 SARI",
-                "turuncu": "🟠 TURUNCU", "kirmizi": "🔴 KIRMIZI", "siyah": "⚫ SİYAH"
-            }
-            t1, t2, t3 = st.columns(3)
-            t1.metric(label="🌡️ CPU Sıcaklığı",
-                    value=f"{cpu_t}°C",
-                    delta="Normal" if cpu_t < 75 else "Yüksek",
-                    delta_color="normal" if cpu_t < 75 else "inverse")
-            t2.metric(label="💾 SSD Controller",
-                    value=f"{ssd_t}°C",
-                    delta="Normal" if ssd_t < 70 else "Yüksek",
-                    delta_color="normal" if ssd_t < 70 else "inverse")
-            t3.metric(label="🛡️ Termal Durum",
-                    value=emojiler.get(seviye, seviye))
-        else:
-            st.info("🌡️ Termal veri bekleniyor — bot başlatılınca görünecek")
-    except:
-        pass
-        
-    st.markdown("---")
 
     # --- 2. TÜM BOTLARI ZORLA KAPAT BUTONU ---
     if st.button("🚨 TÜM BOTLARI VE SÜREÇLERİ ZORLA KAPAT (KILL ALL)", use_container_width=True):
