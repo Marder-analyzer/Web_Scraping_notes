@@ -164,7 +164,8 @@ def check_internet():
     global son_internet_durumu
     try:
         import urllib.request
-        urllib.request.urlopen("http://8.8.8.8", timeout=5)
+        urllib.request.urlopen("http://clients3.google.com/generate_204", timeout=5)
+
         if son_internet_durumu == "kopuk":
             print("İnternet bağlantısı geri geldi.")
             son_internet_durumu = "ok"

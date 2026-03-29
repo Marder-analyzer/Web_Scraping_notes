@@ -15,6 +15,9 @@ import pytz
 import psutil
 import time
 from dotenv import load_dotenv
+import plotly.graph_objects as go
+from datetime import timedelta
+import urllib.request
 
 load_dotenv()
 
@@ -67,6 +70,7 @@ refresh_count = st_autorefresh(interval=8000, limit=100000, key="auto_refresh")
 # Ekran kararmasını ve "Running..." ikonunu engelle
 st.markdown("""
     <style>
+        * { transition: none !important; animation: none !important; }
         .stApp, [data-testid="stAppViewContainer"],
         [data-testid="stMainBlockContainer"],
         section[data-testid="stMain"] {
@@ -76,6 +80,8 @@ st.markdown("""
             animation: none !important;
         }
         [data-testid="stStatusWidget"] { visibility: hidden !important; }
+        iframe[title="streamlit_autorefresh.autorefresh"] { display: none !important; }
+        div[data-testid="stDecoration"] { display: none !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -681,10 +687,11 @@ if latest_job:
     # İnternet ve NIC watchdog durumu
     try:
         import subprocess
-        internet_ok = subprocess.run(
-            ["ping", "-c", "1", "-W", "2", "8.8.8.8"],
-            capture_output=True, timeout=3
-        ).returncode == 0
+        try:
+            urllib.request.urlopen("http://clients3.google.com/generate_204", timeout=3)
+            internet_ok = True
+        except:
+            internet_ok = False
         internet_renk = "🟢" if internet_ok else "🔴"
         internet_yazi = "Bağlı" if internet_ok else "KOPUK"
     except:
@@ -823,7 +830,13 @@ if latest_job:
         pw_sn = int((datetime.now(timezone.utc) - pw_ping.replace(tzinfo=timezone.utc)).total_seconds())
         pw_status = "🔵 AKTİF" if pw_sn < 60 else "⚪ UYKUDA"
         pwc3.metric("📡 PW Son Sinyal", pw_status, help="Playwright işçisinin son veri gönderdiği an.")
-        pwc3.caption(f"{pw_sn} saniye önce")
+        if pw_sn < 60:
+            pw_sure_str = f"{pw_sn} saniye önce"
+        elif pw_sn < 3600:
+            pw_sure_str = f"{pw_sn//60} dakika {pw_sn%60} sn önce"
+        else:
+            pw_sure_str = f"{pw_sn//3600} saat {(pw_sn%3600)//60} dk önce"
+        pwc3.caption(pw_sure_str)
     else:
         pwc3.metric("📡 PW Son Sinyal", "Bağlantı Yok")
     
@@ -966,6 +979,14 @@ if latest_job:
             help="Her ürün için her güne ait bir fiyat kaydı tutulur. Bu sayı toplam fiyat veri noktası adedini gösterir."
         )
         st.caption("Fiyat dalgalanmalarını analiz etmek için tutulan günlük zaman serisi.")
+        try:
+            db_stats = db.command("dbStats")
+            veri_mb = db_stats.get("dataSize", 0) / (1024*1024)
+            index_mb = db_stats.get("indexSize", 0) / (1024*1024)
+            st.metric("💾 MongoDB Disk Kullanımı", f"{veri_mb:.1f} MB",
+                    delta=f"Index: {index_mb:.1f} MB")
+        except:
+            pass
 
     st.markdown("---")
 
@@ -1006,10 +1027,80 @@ if latest_job:
         df_hourly = pd.DataFrame(hourly_data)[["saat", "islenen", "hiz_urun_dk"]]
         df_hourly.columns = ["Saat", "İşlenen Ürün", "Hız (Ürün/Dk)"]
         
-        # Hız grafiğini çizgi olarak gösterelim (daha profesyonel durur)
-        fig_speed = px.line(df_hourly, x="Saat", y="Hız (Ürün/Dk)", markers=True, 
-                            title="Anlık Tarama Hızı")
-        st.plotly_chart(fig_speed, use_container_width=True)
+        # Hız grafiğini çizgi olarak gösterelim 
+        sinir = datetime.now(timezone.utc) - timedelta(hours=48)
+        tum_jobs = list(db.jobs.find(
+            {"start_time": {"$gte": sinir}},
+            {"hourly_stats": 1, "start_time": 1}
+        ).sort("start_time", 1))
+
+        tum_satirlar = []
+        for job in tum_jobs:
+            job_start = job.get("start_time")
+            if not job_start:
+                continue
+            job_start = job_start.replace(tzinfo=timezone.utc)
+            for h in job.get("hourly_stats", []):
+                try:
+                    saat_str = h.get("saat", "")
+                    saat_int = int(saat_str.split(":")[0])
+                    dk_int = int(saat_str.split(":")[1]) if ":" in saat_str else 0
+                    from datetime import time as dtime
+                    dt = datetime.combine(job_start.date(), dtime(saat_int, dk_int)).replace(tzinfo=timezone.utc)
+                    if dt < job_start - timedelta(hours=1):
+                        dt = dt + timedelta(days=1)
+                    tum_satirlar.append({
+                        "Zaman": dt.astimezone(TR_TZ),
+                        "Hız (Ürün/Dk)": h.get("hiz_urun_dk", 0),
+                    })
+                except:
+                    pass
+
+        if tum_satirlar:
+            df_hourly2 = pd.DataFrame(tum_satirlar).sort_values("Zaman").drop_duplicates("Zaman")
+
+            # Hız değişim açıklamaları
+            annotations = []
+            hizlar = df_hourly2["Hız (Ürün/Dk)"].tolist()
+            zamanlar = df_hourly2["Zaman"].tolist()
+            for i in range(1, len(hizlar)):
+                onceki = hizlar[i-1] if hizlar[i-1] > 0 else 1
+                degisim = (hizlar[i] - hizlar[i-1]) / onceki
+                if degisim < -0.4 and hizlar[i-1] > 10:
+                    try:
+                        zaman_utc = zamanlar[i].astimezone(timezone.utc)
+                        proxy_log = db["proxy_logs"].find_one({"ts": {"$gte": zaman_utc - timedelta(minutes=10), "$lte": zaman_utc + timedelta(minutes=10)}})
+                        neden = "🔄 Proxy yenilendi" if proxy_log else "📉 Hız düştü"
+                    except:
+                        neden = "📉 Hız düştü"
+                    annotations.append({"zaman": zamanlar[i], "hiz": hizlar[i], "neden": neden})
+                elif degisim > 0.5 and hizlar[i-1] < 50:
+                    try:
+                        zaman_utc = zamanlar[i].astimezone(timezone.utc)
+                        proxy_log = db["proxy_logs"].find_one({"ts": {"$gte": zaman_utc - timedelta(minutes=10), "$lte": zaman_utc + timedelta(minutes=10)}})
+                        neden = "✅ Proxy yenilendi" if proxy_log else "📈 Hız yükseldi"
+                    except:
+                        neden = "📈 Hız yükseldi"
+                    annotations.append({"zaman": zamanlar[i], "hiz": hizlar[i], "neden": neden})
+
+            fig_speed = go.Figure()
+            fig_speed.add_trace(go.Scatter(
+                x=df_hourly2["Zaman"], y=df_hourly2["Hız (Ürün/Dk)"],
+                mode="lines+markers", line=dict(color="#4fc3f7", width=2), marker=dict(size=5)
+            ))
+            for ann in annotations:
+                fig_speed.add_annotation(
+                    x=ann["zaman"], y=ann["hiz"], text=ann["neden"],
+                    showarrow=True, arrowhead=2, arrowcolor="#ff7043",
+                    font=dict(size=10, color="#ff7043"), bgcolor="rgba(30,30,30,0.8)"
+                )
+            fig_speed.update_layout(
+                title="Anlık Tarama Hızı (Son 48 Saat)",
+                xaxis=dict(type="date", tickformat="%d/%m %H:%M"),
+                template="plotly_dark", margin=dict(l=0, r=0, t=40, b=0),
+                hovermode="x unified"
+            )
+            st.plotly_chart(fig_speed, use_container_width=True)
     else:
         st.info("Saatlik performans verisi henüz oluşmadı (Botun en az 1 saat çalışması lazım).")
 
