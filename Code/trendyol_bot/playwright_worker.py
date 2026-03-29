@@ -71,6 +71,7 @@ def update_pw_stats(job_id,gorev_adi, denenen, basarili):
         return
         
     simdi = datetime.now(timezone.utc)
+    basarisiz = denenen - basarili
     print(f"📊 [Rapor Gönderiliyor] Job ID: {job_id} | Görev: {gorev_adi} | Denenen: {denenen} | Başarılı: {basarili}")
     
     try:
@@ -89,6 +90,27 @@ def update_pw_stats(job_id,gorev_adi, denenen, basarili):
         print(f"✅ [Veritabanı Yanıtı] Eşleşen Kayıt: {res.matched_count} | Güncellenen: {res.modified_count}")
     except Exception as e:
         print(f"⚠️ Rapor veritabanına yazılamadı: {e}")
+        
+    bot_id_map = {
+        "hata_coz":      "pw_hata",
+        "fiyat_guncelle": "pw_fiyat",
+        "liste_kurtar":  "pw_liste"
+    }
+    bot_id = bot_id_map.get(gorev_adi)
+    if bot_id:
+        try:
+            cmd_col_pw.update_one(
+                {"bot_id": bot_id},
+                {"$inc": {
+                    "toplam_denenen": denenen,
+                    "toplam_basarili": basarili,
+                    "toplam_basarisiz": basarisiz
+                },
+                "$set": {"son_rapor": simdi}},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"⚠️ bot_commands güncellenemedi: {e}")
 
 def get_product_data_with_playwright(context, url):
     """Playwright ile ekrandan tüm verileri (Fiyat, Resimler, Özellikler vb.) eksiksiz söker."""
@@ -314,7 +336,7 @@ def mod2_fiyat_guncelle(context, job_id):
 
 def mod3_liste_kurtar(context, job_id):
     """Liste sayfalarındaki (pi=) 403'lü URL'lere girer, 24 ürünü bulup kazır."""
-    update_pw_stats(job_id, "hata_coz", 0, 0)
+    update_pw_stats(job_id, "liste_kurtar", 0, 0)
     
     # 2 Liste sayfası x 24 ürün = 48 URL yapar (50 URL barajımız için ideal)
     bekleyenler = list(failed_col.find({
@@ -425,7 +447,7 @@ def mod3_liste_kurtar(context, job_id):
                 {"$inc": {"playwright_deneme": 1}, "$set": {"son_hata_sebebi": str(e)[:60]}}
             )
     
-    update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi)
+    update_pw_stats(job_id, "liste_kurtar", deneme_sayisi, basarili_sayisi)
     return True
 
 

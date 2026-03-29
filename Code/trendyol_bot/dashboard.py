@@ -780,6 +780,11 @@ if latest_job:
             st.caption(b_stat)
             if sure_yazi:
                 st.caption(f"⏱️ {sure_yazi}")
+            if bot_cmd:
+                basarili = bot_cmd.get("toplam_basarili", 0)
+                basarisiz = bot_cmd.get("toplam_basarisiz", 0)
+                if basarili or basarisiz:
+                    st.caption(f"✅ {basarili} | ❌ {basarisiz}")
     st.write("")
     
     
