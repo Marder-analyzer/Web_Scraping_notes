@@ -706,7 +706,19 @@ if latest_job:
         # Yüzdeyi hesapla (Maksimum %100 olsun diye min kullandık)
         yuzde = min(100, int((total_proc / total_target) * 100))
         # Streamlit progress bar 0.0 ile 1.0 arası değer alır
-        st.progress(yuzde / 100.0, text=f"🚀 Tarama İlerlemesi: %{yuzde} ({total_proc:,} / {total_target:,} Tahmini Ürün)")
+        try:
+            toplam_sure_sn = sum(
+                (d.get("end_time") - d.get("start_time")).total_seconds()
+                for d in db.jobs.find({}, {"start_time": 1, "end_time": 1})
+                if d.get("start_time") and d.get("end_time")
+            )
+            ts_h = int(toplam_sure_sn // 3600)
+            ts_m = int((toplam_sure_sn % 3600) // 60)
+            sure_yazi = f" | ⏱️ Toplam: {ts_h}s {ts_m}dk"
+        except:
+            sure_yazi = ""
+
+        st.progress(yuzde / 100.0, text=f"🚀 Tarama İlerlemesi: %{yuzde} ({total_proc:,} / {total_target:,} Tahmini Ürün){sure_yazi}")
         try:
             start_time = latest_job.get("start_time")
             if start_time and total_proc > 0 and total_target > total_proc:
