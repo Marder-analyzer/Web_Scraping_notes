@@ -433,30 +433,45 @@ print("💂‍♂️ NeuraNovaV Bot Manager (Komutan) Başlatıldı! Emirler bek
 MONGO_URI = "mongodb://localhost:27017/"
 MONGO_DB = "neuranovav_db"
 
-client = pymongo.MongoClient(MONGO_URI)
-db = client[MONGO_DB]
-cmd_col = db["bot_commands"]
+client = None
+db = None
+cmd_col = None
 
-# İşletim sisteminde çalışan süreçleri takip edeceğimiz sözlük
-# Format: {"ana_bot": <subprocess.Popen object>, ...}
 active_processes = {}
 os.makedirs("logs", exist_ok=True)
 os.makedirs("crawls", exist_ok=True)
 
+def connect_mongo():
+    global client, db, cmd_col
+    while True:
+        try:
+            c = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
+            c.admin.command("ping")  # Lazy load tuzağına düşmemek için
+            client  = c
+            db      = client[MONGO_DB]
+            cmd_col = db["bot_commands"]
+            print("✅ MongoDB bağlantısı kuruldu.")
+            return
+        except Exception as e:
+            print(f"⏳ MongoDB bekleniyor: {e} | 10 saniye sonra tekrar...")
+            time.sleep(10)
+
 def sync_with_db():
-    """Manager açıldığında DB'de 'çalışıyor' görünen botları kontrol eder."""
     running_in_db = list(cmd_col.find({"is_running": True}))
     for bot in running_in_db:
-        pid = bot.get("pid")
+        pid    = bot.get("pid")
         bot_id = bot.get("bot_id")
         if pid and psutil.pid_exists(pid):
             if bot_id not in active_processes:
-                active_processes[bot_id] = pid 
+                active_processes[bot_id] = pid
                 print(f"🔄 Zombi bot bulundu ve kontrol altına alındı: {bot_id} (PID: {pid})")
         else:
-            cmd_col.update_one({"bot_id": bot_id}, {"$set": {"is_running": False, "status": "stopped"}})
+            cmd_col.update_one(
+                {"bot_id": bot_id},
+                {"$set": {"is_running": False, "status": "stopped"}}
+            )
 
-# Döngüden önce mutlaka çalıştır
+connect_mongo()
 sync_with_db()
 
 # ── MERKEZİ RAM PAY HESAPLAMA ──
@@ -587,6 +602,23 @@ def close_active_jobs_in_db(bot_id, manual_stop=False):
 
 while True:
     try:
+        # MongoDB bağlantı kontrolü
+        try:
+            client.admin.command("ping")
+        except Exception:
+            print("⚠️ MongoDB bağlantısı koptu! Alt botlar durduruluyor...")
+            for b_id in list(active_processes.keys()):
+                try:
+                    pid = active_processes[b_id].pid if hasattr(active_processes[b_id], 'pid') else active_processes[b_id]
+                    kill_process_tree(pid)
+                    del active_processes[b_id]
+                    print(f"🛑 {b_id} durduruldu (DB koptu)")
+                except:
+                    pass
+            connect_mongo()
+            sync_with_db()
+            print("✅ MongoDB geri geldi, devam ediliyor...")
+
         if not check_internet():
             time.sleep(30)
             continue
