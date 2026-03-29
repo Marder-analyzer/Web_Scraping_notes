@@ -36,8 +36,8 @@ TR_PREFIXES = (
 BAN_LIMIT       = 30    # Madde 20: kaç ban sonra retired
 MONGO_URI      = "mongodb://localhost:27017/"
 MONGO_DB       = "neuranovav_db"    # pipelines.py ile aynı
-HEDEF_HAVUZ    = 16 
-DOLUM_ESIGI    = 8
+HEDEF_HAVUZ    = 150
+DOLUM_ESIGI    = 15
 
 def _is_tr(proxy_url: str) -> bool:
     """http://IP:PORT formatındaki proxy'nin TR bloğunda olup olmadığını kontrol eder."""
@@ -437,7 +437,7 @@ class LiveProxyUpdater:
                     if good < DOLUM_ESIGI and not self._sleeping:
                         log.info(f"Proxy havuzu azaldı (good={good} < {DOLUM_ESIGI}), yenileme tetikleniyor...")
                         self._trigger_update()
-                    if good == 0 and (unchecked == 0 or unchecked > 50):
+                    if good == 0 and unchecked == 0:
                         log.warning(f"Proxy havuzu tamamen tükendi (good=0, unchecked=0) | Direkt geçiş")
                         self._enter_sleep_mode()
                     break
