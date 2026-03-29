@@ -193,7 +193,7 @@ def mod1_kuyruk_temizle(context, job_id):
     deneme_sayisi = len(bekleyenler) 
     
     for item in bekleyenler:
-         # ── TERMAL KONTROL ──
+        # ── TERMAL KONTROL ──
         try:
             termal = cmd_col_pw.find_one({"bot_id": "termal_durum"})
             if termal:
@@ -201,15 +201,15 @@ def mod1_kuyruk_temizle(context, job_id):
                 if seviye == "siyah":
                     print(f"⚫ Termal SIYAH — 5 dk bekleniyor...")
                     time.sleep(300)
-                    continue
+                    break
                 elif seviye == "kirmizi":
                     print(f"🔴 Termal KIRMIZI — 2 dk bekleniyor...")
                     time.sleep(120)
-                    continue
+                    break
                 elif seviye == "turuncu":
                     print(f"🟠 Termal TURUNCU — 1 dk bekleniyor...")
                     time.sleep(60)
-                    continue
+                    break
         except:
             pass
         # ── TERMAL KONTROL SONU ──
@@ -284,15 +284,15 @@ def mod2_fiyat_guncelle(context, job_id):
                 if seviye == "siyah":
                     print(f"⚫ Termal SIYAH — 5 dk bekleniyor...")
                     time.sleep(300)
-                    continue
+                    break
                 elif seviye == "kirmizi":
                     print(f"🔴 Termal KIRMIZI — 2 dk bekleniyor...")
                     time.sleep(120)
-                    continue
+                    break
                 elif seviye == "turuncu":
                     print(f"🟠 Termal TURUNCU — 1 dk bekleniyor...")
                     time.sleep(60)
-                    continue
+                    break
         except:
             pass
         # ── TERMAL KONTROL SONU ──
@@ -335,7 +335,7 @@ def mod3_liste_kurtar(context, job_id):
     
     for item in bekleyenler:
         
-         # ── TERMAL KONTROL ──
+        # ── TERMAL KONTROL ──
         try:
             termal = cmd_col_pw.find_one({"bot_id": "termal_durum"})
             if termal:
@@ -343,15 +343,15 @@ def mod3_liste_kurtar(context, job_id):
                 if seviye == "siyah":
                     print(f"⚫ Termal SIYAH — 5 dk bekleniyor...")
                     time.sleep(300)
-                    continue
+                    break
                 elif seviye == "kirmizi":
                     print(f"🔴 Termal KIRMIZI — 2 dk bekleniyor...")
                     time.sleep(120)
-                    continue
+                    break
                 elif seviye == "turuncu":
                     print(f"🟠 Termal TURUNCU — 1 dk bekleniyor...")
                     time.sleep(60)
-                    continue
+                    break
         except:
             pass
         # ── TERMAL KONTROL SONU ──

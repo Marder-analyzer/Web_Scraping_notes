@@ -753,6 +753,8 @@ if latest_job:
                     delta_color="normal" if ssd_t < 70 else "inverse")
             t3.metric(label="🛡️ Termal Durum",
                     value=emojiler.get(seviye, seviye))
+        else:
+            st.info("🌡️ Termal veri bekleniyor — bot başlatılınca görünecek")
     except:
         pass
         

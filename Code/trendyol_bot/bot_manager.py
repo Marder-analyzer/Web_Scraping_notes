@@ -4,6 +4,7 @@ import subprocess
 import psutil
 import sys
 import os
+import re
 from datetime import datetime, timezone
 
 import smtplib
@@ -154,7 +155,7 @@ son_heartbeat_maili = 0
 son_heartbeat_durumu = "normal"
 son_cpu_maili = 0
 son_cpu_durdurma = 0
-son_cpu_durumu = "normal"  # "normal", "sicak", "kritik"
+son_cpu_durumu = "yesil"  
 
 son_internet_kontrol = 0
 son_internet_durumu = "ok"
