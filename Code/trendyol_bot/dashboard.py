@@ -71,18 +71,46 @@ refresh_count = st_autorefresh(interval=8000, limit=100000, key="auto_refresh")
 st.markdown("""
     <style>
         * { transition: none !important; animation: none !important; }
+        
         .stApp, [data-testid="stAppViewContainer"],
         [data-testid="stMainBlockContainer"],
-        section[data-testid="stMain"] {
+        section[data-testid="stMain"],
+        [data-testid="stAppViewBlockContainer"],
+        .main, .block-container,
+        [data-testid="stVerticalBlock"],
+        [data-testid="stHorizontalBlock"] {
             opacity: 1 !important;
             filter: none !important;
             transition: none !important;
             animation: none !important;
         }
+        
+        .stApp[data-teststate="running"] .stMarkdown,
+        .stApp[data-teststate="running"] .element-container,
+        .stApp[data-teststate="running"] [data-testid] {
+            opacity: 1 !important;
+            filter: none !important;
+        }
+        
         [data-testid="stStatusWidget"] { visibility: hidden !important; }
         iframe[title="streamlit_autorefresh.autorefresh"] { display: none !important; }
         div[data-testid="stDecoration"] { display: none !important; }
+        #MainMenu { visibility: hidden !important; }
+        [data-testid="stAppViewContainer"] > div { opacity: 1 !important; }
+        div[class*="withScreencast"] { opacity: 1 !important; }
+        div[class*="stSpinner"] { display: none !important; }
+        header { visibility: hidden !important; }
+        body { opacity: 1 !important; }
     </style>
+    <script>
+        setInterval(() => {
+            document.querySelectorAll('[data-testid="stAppViewContainer"], .stApp, body, .main, .block-container').forEach(el => {
+                el.style.setProperty('opacity', '1', 'important');
+                el.style.setProperty('filter', 'none', 'important');
+                el.style.setProperty('transition', 'none', 'important');
+            });
+        }, 50);
+    </script>
 """, unsafe_allow_html=True)
 
 # Son yenileme zamanı
@@ -407,12 +435,12 @@ with st.sidebar:
             if calisiyor_mu:
                 # Çalışıyorsa kırmızı DURDUR butonu göster
                 st.markdown(f"<div style='color:#00ED64; font-weight:bold; margin-bottom:5px;'>🟢 {bot_id.upper()} SAHADA</div>", unsafe_allow_html=True)
-                if st.button(f"🛑 DURDUR", key=f"stop_{bot_id}", type="primary", use_container_width=True):
+                if st.button(f"🛑 DURDUR", key=f"stop_{bot_id}", type="primary", width='stretch'):
                     send_command(bot_id, "stop")
                     st.rerun()
             else:
                 # Çalışmıyorsa normal BAŞLAT butonu göster
-                if st.button(btn_text, key=f"start_{bot_id}", use_container_width=True):
+                if st.button(btn_text, key=f"start_{bot_id}", width='stretch'):
                     send_command(bot_id, "start")
                     st.rerun()
             
@@ -730,7 +758,7 @@ if latest_job:
     
 
     # --- 2. TÜM BOTLARI ZORLA KAPAT BUTONU ---
-    if st.button("🚨 TÜM BOTLARI VE SÜREÇLERİ ZORLA KAPAT (KILL ALL)", use_container_width=True):
+    if st.button("🚨 TÜM BOTLARI VE SÜREÇLERİ ZORLA KAPAT (KILL ALL)", width='stretch'):
         # Veritabanındaki tüm botlara 'force_stop' emri gönderiyoruz
         cmd_col.update_many(
             {"is_running": True}, 
@@ -739,7 +767,7 @@ if latest_job:
         st.error("⚠️ Tüm botlara imha emri gönderildi! İşlem saniyeler içinde tamamlanacak.")
 
     # --- 3. YENİ: PANİK BUTONU (GÖRÜNMEZ ZOMBİLERİ TEMİZLE) ---
-    if st.button("☣️ GİZLİ SÜREÇLERİ (ZOMBİ CHROME'LARI) TEMİZLE (PANİK BUTONU)", type="primary", use_container_width=True):
+    if st.button("☣️ GİZLİ SÜREÇLERİ (ZOMBİ CHROME'LARI) TEMİZLE (PANİK BUTONU)", type="primary", width='stretch'):
         cmd_col.update_one(
             {"bot_id": "system"},
             {"$set": {"action": "panic_kill", "status": "pending", "stop_processed": False}},
@@ -920,7 +948,7 @@ if latest_job:
         if df_drop["Adet"].sum() > 0:
             fig = px.pie(df_drop, values="Adet", names="Durum", hole=0.4,
                          color_discrete_sequence=px.colors.sequential.RdBu)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             st.info("Grafik için veri bekleniyor...")
 
@@ -975,7 +1003,7 @@ if latest_job:
             showlegend=False,
             margin=dict(l=0, r=0, t=10, b=0)
         )
-        st.plotly_chart(fig_cat, use_container_width=True)
+        st.plotly_chart(fig_cat, width='stretch')
     else:
         st.info("Kategori verisi için önce botu çalıştırın.")
 
@@ -1051,7 +1079,7 @@ if latest_job:
                 template="plotly_dark", margin=dict(l=0, r=0, t=40, b=0),
                 hovermode="x unified"
             )
-            st.plotly_chart(fig_speed, use_container_width=True)
+            st.plotly_chart(fig_speed, width='stretch')
         else:
             st.info("Saatlik performans verisi henüz oluşmadı (Botun en az 1 saat çalışması lazım).")
     except Exception as e:
@@ -1192,7 +1220,7 @@ if latest_job:
                 df_goster.columns = ["Proxy Adresi", "Başarılı", "Ban", "Başarı %", "Durum"]
                 
                 # Renklendirme yapmadan düz tablo olarak bas (Daha güvenli)
-                st.dataframe(df_goster, use_container_width=True, hide_index=True)
+                st.dataframe(df_goster, width='stretch', hide_index=True)
                 
                 # Emeklilik Uyarısı (Madde 20)
                 emekli_sayisi = int(df_p["retired"].sum())
@@ -1239,7 +1267,7 @@ if latest_job:
                     df_hata.columns = ["Hata Tipi", "Adet"]
                     fig_hata = px.pie(df_hata, values="Adet", names="Hata Tipi", hole=0.4,
                                      color_discrete_sequence=px.colors.sequential.Reds_r)
-                    st.plotly_chart(fig_hata, use_container_width=True)
+                    st.plotly_chart(fig_hata, width='stretch')
 
             # ── ÇÖZÜLMEMIŞ vs ÇÖZÜLMÜŞ ──
             with f2:
@@ -1250,7 +1278,7 @@ if latest_job:
                 ])
                 fig_durum = px.pie(df_durum, values="Adet", names="Durum", hole=0.4,
                                    color_discrete_map={"⏳ Çözülmemiş": "#e53935", "✅ Çözülmüş": "#43a047"})
-                st.plotly_chart(fig_durum, use_container_width=True)
+                st.plotly_chart(fig_durum, width='stretch')
 
             # ── EN ÇOK HATA ALAN URL'LER (Top 10) ──
             st.markdown("#### 🔗 En Çok Hata Alan URL'ler (Top 10)")
@@ -1270,7 +1298,7 @@ if latest_job:
                 )
                 df_urls = df_urls[["url", "hata_tipi", "deneme_sayisi", "proxy_sayisi", "Durum"]].copy()
                 df_urls.columns = ["URL", "Son Hata", "Deneme", "Proxy Sayısı", "Durum"]
-                st.dataframe(df_urls, use_container_width=True, hide_index=True)
+                st.dataframe(df_urls, width='stretch', hide_index=True)
 
             # ── EN ÇOK BAŞARISIZ PROXY'LER ──
             st.markdown("#### 🛡️ URL Bazlı En Çok Başarısız Proxy'ler")
@@ -1288,7 +1316,7 @@ if latest_job:
                                 color="Başarısız URL Sayısı", color_continuous_scale="Reds")
                 fig_pb.update_layout(yaxis=dict(autorange="reversed"),
                                      margin=dict(l=0, r=0, t=10, b=0))
-                st.plotly_chart(fig_pb, use_container_width=True)
+                st.plotly_chart(fig_pb, width='stretch')
         else:
             st.info("🕐 Henüz hata kaydı yok, bot çalışınca burası dolacak.")
 
