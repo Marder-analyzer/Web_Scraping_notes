@@ -745,26 +745,41 @@ if latest_job:
         st.info("🔄 Tarama hedefi hesaplanıyor...")
     
     st.markdown("##### 🤖 Alt Sistem Görev Durumları")
-    col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+    col_b1, col_b2, col_b3, col_b4, col_b5 = st.columns(5)
     
     bot_ui_list = [
-        ("ana_bot", "🕷️ Ana Bot", col_b1),
-        ("pw_hata", "🚑 İtfaiye", col_b2),
-        ("pw_liste", "🔍 Liste Kurtar", col_b3),
-        ("scrapy_fiyat", "⚡ Hızlı Fiyat", col_b3),
-        ("pw_fiyat", "🐢 Güvenilir (PW)", col_b4)
+        ("ana_bot",      "🕷️ Ana Bot",        col_b1),
+        ("pw_hata",      "🚑 İtfaiye",         col_b2),
+        ("pw_liste",     "🔍 Liste Kurtar",     col_b3),
+        ("scrapy_fiyat", "⚡ Hızlı Fiyat",      col_b4),
+        ("pw_fiyat",     "🐢 Güvenilir (PW)",   col_b5)
     ]
     
     for b_id, b_name, col in bot_ui_list:
-        # Durumu st.session_state yerine doğrudan veritabanından (Komutandan) soruyoruz
+        bot_cmd = cmd_col.find_one({"bot_id": b_id})
         if is_bot_running_db(b_id):
             b_stat = "🟢 Çalışıyor"
         else:
             b_stat = "Uyku Modu 💤"
-            
+
+        # Çalışma süresi hesapla
+        sure_yazi = ""
+        if bot_cmd:
+            started = bot_cmd.get("started_at")
+            stopped = bot_cmd.get("stopped_at")
+            if started and stopped:
+                fark = (stopped.replace(tzinfo=timezone.utc) - started.replace(tzinfo=timezone.utc)).total_seconds()
+                if fark > 0:
+                    sure_yazi = f"{int(fark//60)}dk {int(fark%60)}sn"
+            elif started and is_bot_running_db(b_id):
+                fark = (datetime.now(timezone.utc) - started.replace(tzinfo=timezone.utc)).total_seconds()
+                sure_yazi = f"{int(fark//60)}dk {int(fark%60)}sn"
+
         with col:
             st.markdown(f"**{b_name}**")
             st.caption(b_stat)
+            if sure_yazi:
+                st.caption(f"⏱️ {sure_yazi}")
     st.write("")
     
     
