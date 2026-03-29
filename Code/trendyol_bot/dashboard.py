@@ -653,8 +653,8 @@ if latest_job:
             st.caption(b_stat)
     st.write("")
     
-    
-        # 1. GERÇEK ÇALIŞAN BOT SAYACINI HESAPLA
+    st.markdown("---")
+    # 1. GERÇEK ÇALIŞAN BOT SAYACINI HESAPLA
     aktif_kayitlar = list(cmd_col.find({"is_running": True}))
     gercek_calisan_sayisi = 0
 
@@ -678,19 +678,59 @@ if latest_job:
     toplam_ram_mb = psutil.virtual_memory().total / (1024 * 1024)
     bot_ram_yuzde = (bot_ram_mb / toplam_ram_mb) * 100
 
-    # İŞTE BURASI YAN YANA GÖSTEREN KISIM (3 Kolon)
+    # İnternet ve NIC watchdog durumu
+    try:
+        import subprocess
+        internet_ok = subprocess.run(
+            ["ping", "-c", "1", "-W", "2", "8.8.8.8"],
+            capture_output=True, timeout=5
+        ).returncode == 0
+        internet_renk = "🟢" if internet_ok else "🔴"
+        internet_yazi = "Bağlı" if internet_ok else "KOPUK"
+    except:
+        internet_renk = "⚪"
+        internet_yazi = "Bilinmiyor"
+
+    try:
+        watchdog_aktif = subprocess.run(
+            ["systemctl", "is-active", "nic-watchdog"],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip() == "active"
+        watchdog_yazi = "Çalışıyor ✅" if watchdog_aktif else "Durdu ❌"
+    except:
+        watchdog_yazi = "Bilinmiyor"
+
+    try:
+        with open("/var/log/nic-watchdog.log") as f:
+            satirlar = f.readlines()
+        reset_sayisi = sum(1 for s in satirlar if "resetleniyor" in s)
+        son_reset = next(
+            (s.strip()[:19] for s in reversed(satirlar) if "Reset tamamlandi" in s),
+            "Hiç reset yok"
+        )
+    except:
+        reset_sayisi = 0
+        son_reset = "Log yok"
+
     col1, col2, col3 = st.columns(3)
-    
     with col1:
         st.metric(label="🕵️ Aktif Botlar", value=gercek_calisan_sayisi)
     with col2:
         st.metric(label=f"{ram_renk} Sistem Toplam RAM", value=f"%{ram_yuzde:.1f}")
     with col3:
         st.metric(
-            label="🤖 Projenin RAM Tüketimi", 
+            label="🤖 Projenin RAM Tüketimi",
             value=f"{bot_ram_mb:.1f} MB",
             delta=f"Sistemin %{bot_ram_yuzde:.1f}'i"
         )
+
+    # Ağ durumu — yeni satır
+    st.markdown("##### 🌐 Ağ & Sistem Sağlığı")
+    n1, n2, n3, n4 = st.columns(4)
+    n1.metric(label="🌐 İnternet", value=f"{internet_renk} {internet_yazi}")
+    n2.metric(label="🔧 NIC Watchdog", value=watchdog_yazi)
+    n3.metric(label="🔁 Otomatik Reset", value=f"{reset_sayisi} kez")
+    n4.metric(label="🕐 Son Reset", value=son_reset)
         
     st.markdown("---")
 

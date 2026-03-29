@@ -156,6 +156,24 @@ son_cpu_maili = 0
 son_cpu_durdurma = 0
 son_cpu_durumu = "normal"  # "normal", "sicak", "kritik"
 
+son_internet_kontrol = 0
+son_internet_durumu = "ok"
+
+def check_internet():
+    global son_internet_durumu
+    try:
+        import urllib.request
+        urllib.request.urlopen("http://8.8.8.8", timeout=5)
+        if son_internet_durumu == "kopuk":
+            print("İnternet bağlantısı geri geldi.")
+            son_internet_durumu = "ok"
+        return True
+    except:
+        if son_internet_durumu == "ok":
+            print("İnternet bağlantısı koptu!")
+            son_internet_durumu = "kopuk"
+        return False
+
 def check_ram_and_alert():
     global son_ram_maili, son_acil_kapatma
 
@@ -552,6 +570,9 @@ def close_active_jobs_in_db(bot_id, manual_stop=False):
 
 while True:
     try:
+        if not check_internet():
+            time.sleep(30)
+            continue
         
         if time.time() - son_ram_kontrol > 30:
             
