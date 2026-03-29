@@ -683,7 +683,7 @@ if latest_job:
         import subprocess
         internet_ok = subprocess.run(
             ["ping", "-c", "1", "-W", "2", "8.8.8.8"],
-            capture_output=True, timeout=5
+            capture_output=True, timeout=3
         ).returncode == 0
         internet_renk = "🟢" if internet_ok else "🔴"
         internet_yazi = "Bağlı" if internet_ok else "KOPUK"
@@ -702,7 +702,7 @@ if latest_job:
 
     try:
         with open("/var/log/nic-watchdog.log") as f:
-            satirlar = f.readlines()
+            satirlar = f.readlines()[-200:]  # ← sadece son 200 satır
         reset_sayisi = sum(1 for s in satirlar if "resetleniyor" in s)
         son_reset = next(
             (s.strip()[:19] for s in reversed(satirlar) if "Reset tamamlandi" in s),
