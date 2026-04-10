@@ -14,6 +14,7 @@ import json
 import pytz
 from dotenv import load_dotenv
 
+MAX_CONCURRENT = psutil.cpu_count(logical=True)
 
 load_dotenv()
 MAIL_SENDER = os.getenv("MAIL_SENDER", "")
@@ -200,8 +201,9 @@ def check_ram_and_alert():
 
         if   proje_yuzde > 88 or sistem_yuzde > 92: hedef = 2
         elif proje_yuzde > 82 or sistem_yuzde > 88: hedef = 4
-        elif proje_yuzde > 75 or sistem_yuzde > 85: hedef = 8
-        else:                                        hedef = 16
+        elif proje_yuzde > 75 or sistem_yuzde > 85: hedef = MAX_CONCURRENT // 2
+        else:
+            hedef = MAX_CONCURRENT
 
         mevcut = cmd_col.find_one({"bot_id": "ram_throttle"})
         if not mevcut or mevcut.get("concurrent") != hedef:
@@ -351,16 +353,16 @@ def check_cpu_temp():
         hedef_concurrent = 2
     elif cpu_sicaklik > 90 or ssd_sicaklik > 82:
         yeni_seviye = "kirmizi"
-        hedef_concurrent = 4
+        hedef_concurrent = max(4, MAX_CONCURRENT // 4)
     elif ssd_sicaklik > 78:
         yeni_seviye = "turuncu"
-        hedef_concurrent = 8
+        hedef_concurrent = max(8, MAX_CONCURRENT // 2)
     elif cpu_sicaklik > 82:
         yeni_seviye = "sari"
-        hedef_concurrent = 8
+        hedef_concurrent = max(8, MAX_CONCURRENT // 2)
     else:
         yeni_seviye = "yesil"
-        hedef_concurrent = 16
+        hedef_concurrent = MAX_CONCURRENT
 
     # Durum değiştiyse logla
     if yeni_seviye != son_cpu_durumu:
