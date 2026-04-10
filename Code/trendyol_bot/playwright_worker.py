@@ -74,6 +74,7 @@ def update_pw_stats(job_id,gorev_adi, denenen, basarili):
     basarisiz = denenen - basarili
     print(f"📊 [Rapor Gönderiliyor] Job ID: {job_id} | Görev: {gorev_adi} | Denenen: {denenen} | Başarılı: {basarili}")
     
+    hiz = round(basarili / (sure_sn / 60), 1) if sure_sn > 0 and basarili > 0 else 0
     try:
         res = db.jobs.update_one(
             {"job_id": job_id},
@@ -84,6 +85,14 @@ def update_pw_stats(job_id,gorev_adi, denenen, basarili):
                 },
                 "$set": {
                     "pw_last_ping": simdi
+                },
+                "$push": {
+                    f"pw_{gorev_adi}_hiz_log": {
+                        "ts": simdi,
+                        "basarili": basarili,
+                        "sure_sn": sure_sn,
+                        "hiz_dk": hiz
+                    }
                 }
             }
         )
@@ -275,7 +284,9 @@ def mod1_kuyruk_temizle(context, job_id):
 
             print(f"  🔴 BAŞARISIZ: {status} -> {url.split('?')[0][-30:]}")
             
-    update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi)
+    tur_bitis = time.time()
+    sure_sn = tur_bitis - tur_baslangic  # bunu mod başına ekle: tur_baslangic = time.time()
+    update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi, sure_sn)
     return True
 
 

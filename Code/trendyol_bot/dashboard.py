@@ -1118,6 +1118,46 @@ if latest_job:
 
     st.markdown("---")
 
+
+    # playwright hız grafiği
+    st.markdown("##### ⚡ Playwright Tur Bazlı Hız (Ürün/Dk)")
+    try:
+        pw_hiz_satirlar = []
+        for gorev, etiket in [
+            ("hata_coz", "🚒 İtfaiye"),
+            ("liste_kurtar", "🔍 Liste"),
+            ("fiyat_guncelle", "🐢 PW Fiyat")
+        ]:
+            hiz_log = latest_job.get(f"pw_{gorev}_hiz_log", [])
+            for kayit in hiz_log:
+                ts = kayit.get("ts")
+                if ts:
+                    pw_hiz_satirlar.append({
+                        "Zaman": ts.replace(tzinfo=timezone.utc).astimezone(TR_TZ),
+                        "Hız (Ürün/Dk)": kayit.get("hiz_dk", 0),
+                        "Görev": etiket
+                    })
+        if pw_hiz_satirlar:
+            df_pw_hiz = pd.DataFrame(pw_hiz_satirlar).sort_values("Zaman")
+            fig_pw = px.line(
+                df_pw_hiz, x="Zaman", y="Hız (Ürün/Dk)", color="Görev",
+                color_discrete_map={
+                    "🚒 İtfaiye": "#ef5350",
+                    "🔍 Liste": "#42a5f5",
+                    "🐢 PW Fiyat": "#66bb6a"
+                }
+            )
+            fig_pw.update_layout(
+                template="plotly_dark",
+                margin=dict(l=0, r=0, t=10, b=0),
+                hovermode="x unified"
+            )
+            st.plotly_chart(fig_pw, width='stretch')
+        else:
+            st.info("Playwright hız verisi henüz oluşmadı.")
+    except Exception as e:
+        st.error(f"Playwright grafik hatası: {e}")
+
     # ── KATEGORİ DAĞILIMI ──
     st.subheader("📂 Kategoriye Göre Çekilen Ürün Sayısı")
     cat_pipeline = [
@@ -1259,6 +1299,9 @@ if latest_job:
         
     st.markdown("---")
 
+    
+    
+    
     # ── FAZ 5: PROXY İSTİHBARAT MERKEZİ ──
     st.subheader("🛡️ Proxy İstihbarat Merkezi")
 
