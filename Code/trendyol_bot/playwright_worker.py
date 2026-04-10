@@ -149,9 +149,12 @@ def get_product_data_with_playwright(context, url):
                 }
             } catch(e) {}
 
-            let imgEls = document.querySelectorAll('.product-image-container img, img[data-testid="image"]');
-            let images = Array.from(imgEls).map(img => img.src).filter(src => src && !src.includes('data:image'));
-            images = [...new Set(images)]; 
+            let imgEls = document.querySelectorAll('img[data-testid="image"]');
+            let images = Array.from(imgEls)
+                .map(img => img.src)
+                .filter(src => src && (src.includes('_org_zoom.jpg') || src.includes('_org.jpg')))
+                .map(src => src.replace(/mnresize\/\d+\/\d+\//, ''))
+            images = [...new Set(images)];
 
             let evalEl = document.querySelector('.reviews-summary-average-rating');
             let evaluation = evalEl ? evalEl.innerText.trim() : '-1';
@@ -343,7 +346,8 @@ def mod3_liste_kurtar(context, job_id):
     # 2 Liste sayfası x 24 ürün = 48 URL yapar (50 URL barajımız için ideal)
     bekleyenler = list(failed_col.find({
         "cozuldu": False,
-        "sayfa_turu": "liste"
+        "sayfa_turu": "liste",
+        "hata_tipi": {"$in": ["HTTP_403", "HTTP_429", "Timeout", "DNS_Error"]}
     }).limit(2))
     
     if not bekleyenler:

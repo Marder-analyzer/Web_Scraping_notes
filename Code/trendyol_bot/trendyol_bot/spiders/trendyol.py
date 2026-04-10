@@ -496,11 +496,13 @@ class TrendyolSpider(scrapy.Spider):
         if failure.check(HttpError):
             response = failure.value.response
             self.logger.error(f"[Spider] HTTP {response.status} | {request_url}")
-            if response.status == 403:
-                self.logger.error("[Spider] 403 Forbidden! Ban veya Captcha.")
+            if response.status == 404:
+                return  # 404 = sayfa yok, kuyruğa alma, direkt geç
+            elif response.status == 403:
                 hata_tipi = "HTTP_403"
             elif response.status == 429:
                 hata_tipi = "HTTP_429"
+                
         elif failure.check(DNSLookupError):
             self.logger.error(f"[Spider] DNS hatasi | {request_url}")
             hata_tipi = "DNS_Error"
