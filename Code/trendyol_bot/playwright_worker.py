@@ -133,8 +133,21 @@ def get_product_data_with_playwright(context, url):
             let priceEl = document.querySelector('.prc-dsc') || document.querySelector('.product-price-container') || document.querySelector('.prc-slg') || document.querySelector('.price');
             let priceText = priceEl ? priceEl.innerText.trim() : '';
 
-            let catEls = document.querySelectorAll('a.product-detail-breadcrumbs-item');
-            let category = Array.from(catEls).map(e => e.innerText.trim()).join(' > ');
+            let category = '';
+            try {
+                let scripts = document.querySelectorAll('script[type="application/ld+json"]');
+                for (let s of scripts) {
+                    let jsonData = JSON.parse(s.innerText);
+                    if (jsonData.breadcrumb && jsonData.breadcrumb.itemListElement) {
+                        category = jsonData.breadcrumb.itemListElement
+                            .sort((a, b) => a.position - b.position)
+                            .map(el => el.item && el.item.name ? el.item.name.trim() : '')
+                            .filter(n => n && n !== 'Trendyol')
+                            .join(' > ');
+                        break;
+                    }
+                }
+            } catch(e) {}
 
             let imgEls = document.querySelectorAll('.product-image-container img, img[data-testid="image"]');
             let images = Array.from(imgEls).map(img => img.src).filter(src => src && !src.includes('data:image'));
