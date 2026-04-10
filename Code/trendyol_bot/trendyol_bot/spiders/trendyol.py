@@ -65,7 +65,8 @@ class TrendyolSpider(scrapy.Spider):
         except:
             self.job_id = None
         
-        self.logger.info(...)
+        self.logger.info(f"[Spider] Basladi | kombinasyon={len(self.categories)} | limit={self.MAX_SAYFA_LIMITI}")
+
     @classmethod
     def clean_url(cls, url):
         """URL'deki gereksiz takip parametrelerini siler, sadece kritik olanları tutar."""
@@ -228,7 +229,8 @@ class TrendyolSpider(scrapy.Spider):
                 if   proje_yuzde > scrapy_limit:              hedef = 2
                 elif proje_yuzde > scrapy_limit * 0.90:       hedef = 4
                 elif proje_yuzde > scrapy_limit * 0.75:       hedef = 8
-                else:                                          hedef = 16
+                else: hedef = self.crawler.settings.getint('CONCURRENT_REQUESTS', 16)
+
 
                 self.crawler.engine.slot.concurrency = hedef
 
@@ -236,6 +238,9 @@ class TrendyolSpider(scrapy.Spider):
                 pass
         
         category_name = response.meta.get("category_name")
+        if not category_name:
+            self.logger.warning(f"[Spider] category_name eksik, atlanıyor | {response.url}")
+            return
         current_page = response.meta.get("page_number", 1)
         
 
@@ -329,7 +334,16 @@ class TrendyolSpider(scrapy.Spider):
 
     # category özgü yapıldı saçma çıktılar tekrar eden çıktıları burada hallettik
     def _load_categories(self, loader, response, json_data):
-        raw_categories = response.css(SELECTORS["category"]).getall()
+        raw_categories = []
+        if json_data:
+            breadcrumb = json_data.get("breadcrumb", {})
+            items = breadcrumb.get("itemListElement", []) if breadcrumb else []
+            if items:
+                raw_categories = [
+                    el["item"]["name"].strip()
+                    for el in sorted(items, key=lambda x: x.get("position", 0))
+                    if el.get("item", {}).get("name") and el["item"]["name"].strip() != "Trendyol"
+                ]
         if not raw_categories and json_data and json_data.get("category"):
             cat_data = json_data.get("category")
             raw_categories = cat_data if isinstance(cat_data, list) else [cat_data]
@@ -507,7 +521,13 @@ class TrendyolSpider(scrapy.Spider):
             response = failure.value.response
             self.logger.error(f"[Spider] HTTP {response.status} | {request_url}")
             if response.status == 404:
-                return  # 404 = sayfa yok, kuyruğa alma, direkt geç
+                if "pi=" in request_url:  # Liste sayfasıysa ziyaret edildi say
+                    meta = failure.request.meta
+                    self._mark_visited(
+                        meta.get("category_name", request_url),
+                        meta.get("page_number", 1)
+                    )
+                return
             elif response.status == 403:
                 hata_tipi = "HTTP_403"
             elif response.status == 429:
@@ -546,9 +566,12 @@ class TrendyolSpider(scrapy.Spider):
             
     def closed(self, reason):
         duration = time.time() - self.start_time
-        # Madde 11: kapanış raporu — tek blok, temiz
         self.logger.info(
             f"[Spider] Kapandi | sebep={reason} | "
             f"sure={duration:.1f}s ({duration/60:.1f}dk) | "
             f"cekilen={self.scraped_count}"
         )
+        try:
+            self._mongo_client.close()
+        except:
+            pass
