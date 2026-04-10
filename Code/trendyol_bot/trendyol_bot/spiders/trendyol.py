@@ -58,9 +58,14 @@ class TrendyolSpider(scrapy.Spider):
         self._datetime = datetime
         self._timezone = timezone
         
-        self.logger.info(f"[Spider] Basladi | kombinasyon={len(self.categories)} | limit={self.MAX_SAYFA_LIMITI}")
-
-    
+        # En son job_id'yi al
+        try:
+            latest_job = self._db.jobs.find_one(sort=[("start_time", pymongo.DESCENDING)])
+            self.job_id = latest_job["job_id"] if latest_job else None
+        except:
+            self.job_id = None
+        
+        self.logger.info(...)
     @classmethod
     def clean_url(cls, url):
         """URL'deki gereksiz takip parametrelerini siler, sadece kritik olanları tutar."""
@@ -116,12 +121,17 @@ class TrendyolSpider(scrapy.Spider):
             self.logger.warning(f"[Spider] visited_pages yazma hatasi: {e}")
 
     def _tamamlanan_max_sayfa(self) -> int:
-        toplam_kategori = len(self.categories)
-        if toplam_kategori == 0:
+        biten = self._visited_col.count_documents({"page": 1, "status": "done"})
+        toplam = len(self.categories)
+        if toplam == 0:
             return 0
-        for sayfa in range(1, 10001):
+        # Sayfa 1'in %95'i bitmemişse oradan devam et
+        if biten < toplam * 0.95:
+            return 0  # baslangic_sayfa = 1
+        # Sayfa 1 tamamen bitti, en yüksek tamamlanan sayfayı bul
+        for sayfa in range(2, 10001):
             biten = self._visited_col.count_documents({"page": sayfa, "status": "done"})
-            if biten < toplam_kategori * 0.95:
+            if biten < toplam * 0.95:
                 return sayfa - 1
         return 0
         

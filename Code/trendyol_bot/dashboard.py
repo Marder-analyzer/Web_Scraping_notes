@@ -60,6 +60,8 @@ MAIL_APP_PASS    = os.getenv("MAIL_APP_PASS", "")
 SAVED_MAILS_FILE = "saved_mails.json"
 ZOMBIE_FLAG_FILE = "zombie_mail_sent.json"
 TR_TZ            = pytz.timezone("Europe/Istanbul")
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "http://localhost:8501")
+
 
 # ─────────────────────────────────────────────
 # SAYFA YAPILANDIRMASI
@@ -266,8 +268,15 @@ def build_report_html(job, stats, total_products, total_history, subject_prefix=
         aktif_proxy  = max(0, toplam_proxy - emekli_proxy)
         failed_cozulmemis = _db["failed_urls"].count_documents({"cozuldu": False})
         failed_cozulmus   = _db["failed_urls"].count_documents({"cozuldu": True})
+        pw_hata_cmd  = _db["bot_commands"].find_one({"bot_id": "pw_hata"})
+        pw_liste_cmd = _db["bot_commands"].find_one({"bot_id": "pw_liste"})
+        pw_fiyat_cmd = _db["bot_commands"].find_one({"bot_id": "pw_fiyat"})
+        pw_hata_basarili  = pw_hata_cmd.get("toplam_basarili", 0) if pw_hata_cmd else 0
+        pw_liste_basarili = pw_liste_cmd.get("toplam_basarili", 0) if pw_liste_cmd else 0
+        pw_fiyat_basarili = pw_fiyat_cmd.get("toplam_basarili", 0) if pw_fiyat_cmd else 0
     except:
         aktif_proxy = emekli_proxy = toplam_proxy = failed_cozulmemis = failed_cozulmus = 0
+        pw_hata_basarili = pw_liste_basarili = pw_fiyat_basarili = 0
 
     # Proxy tablosu
     proxy_html = ""
@@ -299,7 +308,7 @@ def build_report_html(job, stats, total_products, total_history, subject_prefix=
     <div style="max-width:600px;margin:auto;background:white;border-radius:12px;padding:24px;box-shadow:0 2px 8px #ccc">
         <h2 style="color:#6a0dad">&#128760; NeuraNovaV Bot Raporu</h2>
         <p style="color:#555">{subject_prefix} &mdash; {datetime.now(TR_TZ).strftime('%d %B %Y %H:%M')}</p>
-        <p style="color:#888;font-size:13px">📊 Canlı dashboard: <a href="http://localhost:8501" style="color:#6a0dad">http://localhost:8501</a></p>
+        <p style="color:#888;font-size:13px">📊 Canlı dashboard: <a href="{DASHBOARD_URL}" style="color:#6a0dad">{DASHBOARD_URL}</a></p>
         <hr/>
 
         <h3>🤖 Bot Durumu</h3>
@@ -326,6 +335,13 @@ def build_report_html(job, stats, total_products, total_history, subject_prefix=
             <tr><td style="padding:8px;background:#f9f9f9"><b>❌ Hatalı Düşürülen</b></td><td style="padding:8px;background:#f9f9f9;color:#c62828"><b>{hata:,}</b></td></tr>
         </table>
 
+        <h3>🤖 Playwright İstatistikleri</h3>
+        <table style="width:100%;border-collapse:collapse">
+            <tr><td style="padding:8px;background:#f9f9f9"><b>🚑 İtfaiye Kurtarılan</b></td><td style="padding:8px;background:#f9f9f9;color:#2e7d32"><b>{pw_hata_basarili:,}</b></td></tr>
+            <tr><td style="padding:8px"><b>🔍 Liste Kurtarılan</b></td><td style="padding:8px;color:#1565c0"><b>{pw_liste_basarili:,}</b></td></tr>
+            <tr><td style="padding:8px;background:#f9f9f9"><b>🐢 PW Fiyat Güncellenen</b></td><td style="padding:8px;background:#f9f9f9;color:#e65100"><b>{pw_fiyat_basarili:,}</b></td></tr>
+        </table>
+        
         <h3>🛡️ Proxy Özeti</h3>
         <table style="width:100%;border-collapse:collapse">
             <tr><td style="padding:8px;background:#f9f9f9"><b>✅ Aktif Proxy</b></td><td style="padding:8px;background:#f9f9f9">{aktif_proxy}</td></tr>
@@ -576,6 +592,10 @@ if not db_online:
 
 db = client["neuranovav_db"]
 cmd_col = client["neuranovav_db"]["bot_commands"]
+total_products    = db.products.count_documents({})
+total_history     = db.price_history.count_documents({})
+today_str         = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+bugun_guncellenen = db.price_history.count_documents({"date": today_str})
 default_mail = load_saved_mails()
 default_mail = default_mail[0] if default_mail else None
 
@@ -675,6 +695,27 @@ n1.metric(label="🌐 İnternet", value=f"{internet_renk} {internet_yazi}")
 n2.metric(label="🔧 NIC Watchdog", value=watchdog_yazi)
 n3.metric(label="🔁 Otomatik Reset", value=f"{reset_sayisi} kez")
 n4.metric(label="🕐 Son Reset", value=son_reset)
+
+# Termal durum
+try:
+    termal = cmd_col.find_one({"bot_id": "termal_durum"})
+    if termal:
+        seviye = termal.get("seviye", "yesil")
+        cpu_t  = termal.get("cpu_temp", 0)
+        ssd_t  = termal.get("ssd_temp", 0)
+        termal_emojiler = {
+            "yesil": "🟢", "sari": "🟡",
+            "turuncu": "🟠", "kirmizi": "🔴", "siyah": "⚫"
+        }
+        emoji = termal_emojiler.get(seviye, "❓")
+        t1, t2, t3 = st.columns(3)
+        t1.metric(label="🌡️ Termal Durum", value=f"{emoji} {seviye.upper()}")
+        t2.metric(label="🔥 CPU Sıcaklığı", value=f"{cpu_t:.1f}°C",
+                  delta="Normal" if cpu_t < 82 else "Yüksek!", delta_color="normal" if cpu_t < 82 else "inverse")
+        t3.metric(label="💾 SSD Sıcaklığı", value=f"{ssd_t:.1f}°C",
+                  delta="Normal" if ssd_t < 78 else "Yüksek!", delta_color="normal" if ssd_t < 78 else "inverse")
+except:
+    pass
 st.markdown("---")
 
 if latest_job:
@@ -712,8 +753,8 @@ if latest_job:
                 status_text = f"🟡 BOT YANIT VERMİYOR ({sessiz_dk} dakikadır sinyal yok)"
             
             if default_mail and get_zombie_job_id() != job_id:
-                tp   = db.products.count_documents({})
-                th   = db.price_history.count_documents({})
+                tp   = total_products
+                th   = total_history
                 proxy_data = list(db["proxy_performance"].find().sort("ban_count", -1).limit(5))
                 html = build_report_html(latest_job, stats, tp, th, "⚠️ Bot Yanıt Vermiyor", bot_status=status_text, proxy_data=proxy_data)
                 ok, _ = send_mail(default_mail, "🚨 NeuraNovaV Bot Yanıt Vermiyor!", html)
@@ -725,7 +766,8 @@ if latest_job:
     st.subheader(f"Durum: {status_text}")
     # === İLERLEME ÇUBUĞU (PROGRESS BAR) ===
     total_target = latest_job.get("total_target_urls", 0)
-    total_proc = db.products.count_documents({})
+    total_proc = total_products
+
     
     if total_target > 0:
         # Yüzdeyi hesapla (Maksimum %100 olsun diye min kullandık)
@@ -842,10 +884,7 @@ if latest_job:
         bekleyen_hata = db.failed_urls.count_documents({"cozuldu": False})
         
         # 2. Fiyat Güncelleme Kuyruğu (Toplam ürün - bugün fiyatı alınanlar)
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        bugun_guncellenen = db.price_history.count_documents({"date": today_str})
-        toplam_urun = db.products.count_documents({})
-        bekleyen_fiyat = max(0, toplam_urun - bugun_guncellenen) # Eksiye düşmesini engelle
+        bekleyen_fiyat = max(0, total_products - bugun_guncellenen)
         
         st.subheader("🚒 Playwright İşçi Performansı")
         pwc1, pwc2, pwc3 = st.columns(3)
@@ -871,21 +910,22 @@ if latest_job:
         )
     st.write("")
 
-    # 3. PW Canlılık (Heartbeat)
-    pw_ping = latest_job.get("pw_last_ping")
-    if pw_ping:
-        pw_sn = int((datetime.now(timezone.utc) - pw_ping.replace(tzinfo=timezone.utc)).total_seconds())
-        pw_status = "🔵 AKTİF" if pw_sn < 60 else "⚪ UYKUDA"
-        pwc3.metric("📡 PW Son Sinyal", pw_status, help="Playwright işçisinin son veri gönderdiği an.")
-        if pw_sn < 60:
-            pw_sure_str = f"{pw_sn} saniye önce"
-        elif pw_sn < 3600:
-            pw_sure_str = f"{pw_sn//60} dakika {pw_sn%60} sn önce"
+    if latest_job:
+        # 3. PW Canlılık (Heartbeat)
+        pw_ping = latest_job.get("pw_last_ping")
+        if pw_ping:
+            pw_sn = int((datetime.now(timezone.utc) - pw_ping.replace(tzinfo=timezone.utc)).total_seconds())
+            pw_status = "🔵 AKTİF" if pw_sn < 60 else "⚪ UYKUDA"
+            pwc3.metric("📡 PW Son Sinyal", pw_status, help="Playwright işçisinin son veri gönderdiği an.")
+            if pw_sn < 60:
+                pw_sure_str = f"{pw_sn} saniye önce"
+            elif pw_sn < 3600:
+                pw_sure_str = f"{pw_sn//60} dakika {pw_sn%60} sn önce"
+            else:
+                pw_sure_str = f"{pw_sn//3600} saat {(pw_sn%3600)//60} dk önce"
+            pwc3.caption(pw_sure_str)
         else:
-            pw_sure_str = f"{pw_sn//3600} saat {(pw_sn%3600)//60} dk önce"
-        pwc3.caption(pw_sure_str)
-    else:
-        pwc3.metric("📡 PW Son Sinyal", "Bağlantı Yok")
+            pwc3.metric("📡 PW Son Sinyal", "Bağlantı Yok")
     
 
     # ── ÇALIŞMA SÜRESİ VE HIZ ──
@@ -1011,7 +1051,7 @@ if latest_job:
 
     with g2:
         st.subheader("⚡ Veritabanı Durumu")
-        total_products = db.products.count_documents({})
+        
         st.metric(
             "Toplam Benzersiz Ürün",
             f"{total_products:,}",
@@ -1019,7 +1059,7 @@ if latest_job:
         )
         st.caption("Her URL için tek ürün kaydı tutulur.")
 
-        total_history = db.price_history.count_documents({})
+    
         st.metric(
             "Toplam Fiyat Geçmişi",
             f"{total_history:,}",
