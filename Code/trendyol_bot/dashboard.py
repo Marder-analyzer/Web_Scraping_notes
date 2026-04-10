@@ -886,27 +886,68 @@ if latest_job:
         # 2. Fiyat Güncelleme Kuyruğu (Toplam ürün - bugün fiyatı alınanlar)
         bekleyen_fiyat = max(0, total_products - bugun_guncellenen)
         
-        st.subheader("🚒 Playwright İşçi Performansı")
-        pwc1, pwc2, pwc3 = st.columns(3)
+        st.subheader("🚒 Playwright & Fiyat İşçi Performansı")
+        pwc1, pwc2, pwc3, pwc4 = st.columns(4)
 
-        # 1. Kurtarma Operasyonu (İtfaiye)
-        denenen_hata = latest_job.get("pw_hata_coz_denenen", 0)
-        basarili_hata = latest_job.get("pw_hata_coz_basarili", 0)
+        # 1. İtfaiye
+        try:
+            pw_hata_cmd     = db["bot_commands"].find_one({"bot_id": "pw_hata"})
+            hata_basarili   = pw_hata_cmd.get("toplam_basarili", 0) if pw_hata_cmd else 0
+            hata_basarisiz  = pw_hata_cmd.get("toplam_basarisiz", 0) if pw_hata_cmd else 0
+            hata_denenen    = pw_hata_cmd.get("toplam_denenen", 0) if pw_hata_cmd else 0
+        except:
+            hata_basarili = hata_basarisiz = hata_denenen = 0
         pwc1.metric(
-            "🚒 İtfaiye: Çözülen / Bekleyen", 
-            f"{basarili_hata} / {bekleyen_hata}", 
-            delta=f"{denenen_hata} deneme",
-            help="Playwright'ın hata kuyruğundan kurtardığı ürünler. Sağdaki rakam kuyrukta bekleyen (cozuldu: False) sayıdır."
+            "🚒 İtfaiye: Çözülen / Bekleyen",
+            f"{hata_basarili} / {bekleyen_hata}",
+            delta=f"{hata_denenen} deneme | Başarısız: {hata_basarisiz}",
+            help="Playwright'ın hata kuyruğundan kurtardığı ürünler."
         )
 
-        # 2. Güvenilir Fiyat Güncelleme
-        denenen_fiyat = latest_job.get("pw_fiyat_guncelle_denenen", 0)
-        basarili_fiyat = latest_job.get("pw_fiyat_guncelle_basarili", 0)
+        # 2. Liste Kurtar
+        try:
+            pw_liste_cmd    = db["bot_commands"].find_one({"bot_id": "pw_liste"})
+            liste_basarili  = pw_liste_cmd.get("toplam_basarili", 0) if pw_liste_cmd else 0
+            liste_basarisiz = pw_liste_cmd.get("toplam_basarisiz", 0) if pw_liste_cmd else 0
+            liste_denenen   = pw_liste_cmd.get("toplam_denenen", 0) if pw_liste_cmd else 0
+            bekleyen_liste  = db["failed_urls"].count_documents({"cozuldu": False, "sayfa_turu": "liste"})
+        except:
+            liste_basarili = liste_basarisiz = liste_denenen = bekleyen_liste = 0
         pwc2.metric(
-            "🐢 PW Fiyat: Güncellenmiş / Bekleyen", 
-            f"{basarili_fiyat} / {bekleyen_fiyat}", 
-            delta=f"{denenen_fiyat} deneme",
-            help="Playwright ile fiyatı güncellenenler. Sağdaki rakam bugün henüz fiyatı çekilmeyen ürün sayısını gösterir."
+            "🔍 Liste Kurtar: Çözülen / Bekleyen",
+            f"{liste_basarili} / {bekleyen_liste}",
+            delta=f"{liste_denenen} deneme | Başarısız: {liste_basarisiz}",
+            help="Liste sayfalarından kurtarılan ürünler."
+        )
+
+        # 3. PW Fiyat
+        try:
+            pw_fiyat_cmd    = db["bot_commands"].find_one({"bot_id": "pw_fiyat"})
+            fiyat_basarili  = pw_fiyat_cmd.get("toplam_basarili", 0) if pw_fiyat_cmd else 0
+            fiyat_basarisiz = pw_fiyat_cmd.get("toplam_basarisiz", 0) if pw_fiyat_cmd else 0
+            fiyat_denenen   = pw_fiyat_cmd.get("toplam_denenen", 0) if pw_fiyat_cmd else 0
+        except:
+            fiyat_basarili = fiyat_basarisiz = fiyat_denenen = 0
+        pwc3.metric(
+            "🐢 PW Fiyat: Güncellenmiş / Bekleyen",
+            f"{fiyat_basarili} / {bekleyen_fiyat}",
+            delta=f"{fiyat_denenen} deneme | Başarısız: {fiyat_basarisiz}",
+            help="Playwright ile fiyatı güncellenenler."
+        )
+
+        # 4. Hızlı Fiyat (Scrapy)
+        try:
+            scrapy_fiyat_cmd    = db["bot_commands"].find_one({"bot_id": "scrapy_fiyat"})
+            scrapy_basarili     = scrapy_fiyat_cmd.get("toplam_basarili", 0) if scrapy_fiyat_cmd else 0
+            scrapy_basarisiz    = scrapy_fiyat_cmd.get("toplam_basarisiz", 0) if scrapy_fiyat_cmd else 0
+            scrapy_denenen      = scrapy_fiyat_cmd.get("toplam_denenen", 0) if scrapy_fiyat_cmd else 0
+        except:
+            scrapy_basarili = scrapy_basarisiz = scrapy_denenen = 0
+        pwc4.metric(
+            "⚡ Hızlı Fiyat: Güncellenen / Bekleyen",
+            f"{scrapy_basarili} / {bekleyen_fiyat}",
+            delta=f"{scrapy_denenen} deneme | Başarısız: {scrapy_basarisiz}",
+            help="Scrapy ile hızlı fiyat güncellemesi yapılan ürünler."
         )
     st.write("")
 
@@ -916,7 +957,7 @@ if latest_job:
         if pw_ping:
             pw_sn = int((datetime.now(timezone.utc) - pw_ping.replace(tzinfo=timezone.utc)).total_seconds())
             pw_status = "🔵 AKTİF" if pw_sn < 60 else "⚪ UYKUDA"
-            pwc3.metric("📡 PW Son Sinyal", pw_status, help="Playwright işçisinin son veri gönderdiği an.")
+            pwc4.metric("📡 PW Son Sinyal", pw_status, help="Playwright işçisinin son veri gönderdiği an.")
             if pw_sn < 60:
                 pw_sure_str = f"{pw_sn} saniye önce"
             elif pw_sn < 3600:
