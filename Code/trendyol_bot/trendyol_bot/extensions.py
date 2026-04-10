@@ -14,7 +14,6 @@ PROXY_SOURCES = [
     "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
     "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
     "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/http.txt",
-    "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/countries/TR/proxies.txt",
     "https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt",
     "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/generated/http_proxies.txt",
     "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&country=tr&proxy_format=protocolipport&format=text&timeout=10000",
@@ -31,12 +30,14 @@ TR_PREFIXES = (
     "88.230.", "88.231.", "88.232.", "88.233.", "88.234.", "88.235.",
     "94.54.",  "94.55.",  "176.88.", "176.89.", "176.220.", "176.221.",
     "212.154.", "212.155.", "213.14.", "213.15.",
+    "188.132.", "195.62.", "31.223.", "46.196.", "46.197.",
+    "85.105.", "88.247.", "88.255.", "94.103.", "176.41.",
 )
 
 BAN_LIMIT       = 30    # Madde 20: kaç ban sonra retired
 MONGO_URI      = "mongodb://localhost:27017/"
 MONGO_DB       = "neuranovav_db"    # pipelines.py ile aynı
-HEDEF_HAVUZ    = 150
+HEDEF_HAVUZ    = 50 # 150 idi baya yavaş
 DOLUM_ESIGI    = 15
 
 def _is_tr(proxy_url: str) -> bool:
@@ -66,7 +67,7 @@ class LiveProxyUpdater:
         self.local_error_count = 0
         self.is_paused = False
         self.crawler = crawler
-        self.interval = 900
+        self.interval = 1800
         self._sleeping = False
         self._last_alert_time = 0
         self._db = None
@@ -105,6 +106,9 @@ class LiveProxyUpdater:
         except Exception as e:
             log.warning(f"mongo bağlantısı yok, proxy logu atlanacak | {e}")
 
+        # ── YENİ: MongoDB'den başlangıç proxy yüklemesi ──
+        self._load_from_mongo()
+
         self.task = task.LoopingCall(self._trigger_update)
         self.task.start(self.interval, now=True)
         
@@ -115,6 +119,38 @@ class LiveProxyUpdater:
             f"{len(PROXY_SOURCES)} kaynak | "
             f"her {self.interval // 60} dk"
         )
+
+    def _load_from_mongo(self):
+        """Başlangıçta MongoDB'deki aktif proxileri Scrapy RAM'ine yükler."""
+        if self._db is None:
+            log.warning("MongoDB yok, başlangıç proxy yüklemesi atlandı")
+            return
+        try:
+            from rotating_proxies.expire import ProxyState
+            aktif = list(self._db["proxy_performance"].find(
+                {"retired": False}, {"proxy": 1, "_id": 0}
+            ).sort("success_count", -1))
+            log.info(f"MongoDB'de {len(aktif)} aktif proxy bulundu")
+            if not aktif:
+                log.warning("MongoDB'de aktif proxy yok, GitHub'dan bekleyeceğiz")
+                return
+            yuklendi = 0
+            mw_bulundu = False
+            for mw in self.crawler.engine.downloader.middleware.middlewares:
+                if mw.__class__.__name__ == "RotatingProxyMiddleware":
+                    mw_bulundu = True
+                    for doc in aktif:
+                        p = doc["proxy"]
+                        if p not in mw.proxies.proxies:
+                            mw.proxies.proxies[p] = ProxyState()
+                            mw.proxies.unchecked.add(p)
+                            yuklendi += 1
+                    break
+            if not mw_bulundu:
+                log.warning("RotatingProxyMiddleware bulunamadı, middleware henüz hazır değil")
+            log.info(f"MongoDB başlangıç yüklemesi | {yuklendi} proxy RAM'e yüklendi")
+        except Exception as e:
+            log.warning(f"MongoDB başlangıç yüklemesi hatası | {e}")
 
     def spider_closed(self, spider):
         if hasattr(self, "task") and self.task.running:
@@ -127,9 +163,10 @@ class LiveProxyUpdater:
     # ─────────────────────────────────────────────────────────────────────────
 
     def _trigger_update(self):
-        """Madde 1: Twisted ana döngüsünden tetiklenir. Fetch'i arka thread'e atar."""
+        # Her güncelleme döngüsünde MongoDB'den de besle
+        self._load_from_mongo()
         d = threads.deferToThread(self._fetch_proxies)
-        d.addCallback(self._inject_to_scrapy)   # ana thread'de çalışır → thread-safe
+        d.addCallback(self._inject_to_scrapy)
         d.addErrback(lambda f: log.error(f"beklenmedik hata | {f.getErrorMessage()}"))
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -172,7 +209,7 @@ class LiveProxyUpdater:
                         tum_proxies.add(p)
 
                 # _is_tr fonksiyonunun dosyanda var olduğunu varsayıyoruz
-                tr_list      = [p for p in proxies if getattr(self, '_is_tr', lambda x: False)(p)]
+                tr_list      = [p for p in proxies if _is_tr(p)]
                 foreign_list = [p for p in proxies if p not in tr_list]
 
                 attempt.update({
@@ -255,10 +292,28 @@ class LiveProxyUpdater:
                     
 
                     # Yeni proxileri ekle
+                    simdi = datetime.now(timezone.utc)
                     for p in yeni_gelenler:
                         mw.proxies.proxies[p] = ProxyState()
                         mw.proxies.unchecked.add(p)
                         added += 1
+                        # MongoDB'ye de kaydet
+                        if self._db is not None:
+                            try:
+                                self._db["proxy_performance"].update_one(
+                                    {"proxy": p},
+                                    {
+                                        "$setOnInsert": {
+                                            "first_seen": simdi,
+                                            "retired": False,
+                                            "ban_count": 0,
+                                            "success_count": 0
+                                        }
+                                    },
+                                    upsert=True
+                                )
+                            except:
+                                pass
 
                     # Madde 4: dead (banlı) proxyleri RAM'den temizle
                     dead = [
@@ -304,7 +359,8 @@ class LiveProxyUpdater:
                     {"bot_id": "proxy_stats"},
                     {"$set": {
                         "aktif_proxy": len(ordered),
-                        "updated_at": datetime.now(timezone.utc)
+                        "updated_at": datetime.now(timezone.utc),
+                        "son_guncelleme": datetime.now(timezone.utc)
                     }},
                     upsert=True
                 )
@@ -434,6 +490,26 @@ class LiveProxyUpdater:
                             }},
                             upsert=True
                         )
+                    # Retired proxileri RAM'den temizle
+                    if self._db is not None:
+                        try:
+                            retired_set = set(
+                                doc["proxy"] for doc in self._db["proxy_performance"].find(
+                                    {"retired": True}, {"proxy": 1, "_id": 0}
+                                )
+                            )
+                            temizlendi = 0
+                            for p in list(mw.proxies.proxies.keys()):
+                                if p in retired_set:
+                                    mw.proxies.proxies.pop(p, None)
+                                    mw.proxies.unchecked.discard(p)
+                                    mw.proxies.good.discard(p)
+                                    temizlendi += 1
+                            if temizlendi > 0:
+                                log.info(f"Health check: {temizlendi} retired proxy RAM'den temizlendi")
+                        except Exception as e:
+                            log.warning(f"Retired temizleme hatası | {e}")
+
                     if good < DOLUM_ESIGI and not self._sleeping:
                         log.info(f"Proxy havuzu azaldı (good={good} < {DOLUM_ESIGI}), yenileme tetikleniyor...")
                         self._trigger_update()

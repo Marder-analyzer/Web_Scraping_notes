@@ -255,19 +255,8 @@ def mod1_kuyruk_temizle(context, job_id):
             basarili_sayisi += 1
             print(f"  🟢 KURTARILDI: {data['title'][:30]}... | Fiyat: {data['price']} TL")
         else:
-            failed_col.update_one(
-                {"_id": item["_id"]},
-                {
-                    "$inc": {"playwright_deneme": 1},
-                    "$set": {"son_hata_sebebi": status},
-                    "$push": {
-                        "attempts": {
-                            "$each": [{"ts": simdi, "status": status, "worker": "playwright"}],
-                            "$slice": -20  # FIX: array şişmez
-                        }
-                    }
-                }
-            )
+            failed_col.delete_one({"_id": item["_id"]})
+
             print(f"  🔴 BAŞARISIZ: {status} -> {url.split('?')[0][-30:]}")
             
     update_pw_stats(job_id, "hata_coz", deneme_sayisi, basarili_sayisi)

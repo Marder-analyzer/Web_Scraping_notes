@@ -636,7 +636,26 @@ except:
     reset_sayisi = 0
     son_reset = "Log yok"
 
-col1, col2, col3 = st.columns(3)
+cpu_toplam = psutil.cpu_percent(interval=0.5)
+cpu_cekirdek = psutil.cpu_count(logical=False)
+cpu_renk = "🔴" if cpu_toplam > 85 else "🟡" if cpu_toplam > 60 else "🟢"
+
+proje_cpu = 0.0
+try:
+    procs = [
+        p for p in psutil.process_iter(['name', 'cmdline'])
+        if any(x in " ".join(p.info.get('cmdline') or [])
+            for x in ['scrapy', 'bot_manager', 'playwright', 'streamlit'])
+    ]
+    for p in procs:
+        p.cpu_percent(interval=None)  # ilk çağrı, referans al
+        
+    time.sleep(0.5)
+    proje_cpu = sum(p.cpu_percent(interval=None) for p in procs)
+except Exception:
+    proje_cpu = 0.0
+
+col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
     st.metric(label="🕵️ Aktif Botlar", value=gercek_calisan_sayisi)
 with col2:
@@ -644,6 +663,12 @@ with col2:
 with col3:
     st.metric(label="🤖 Projenin RAM Tüketimi", value=f"{bot_ram_mb:.1f} MB",
               delta=f"Sistemin %{bot_ram_yuzde:.1f}'i")
+with col4:
+    st.metric(label=f"{cpu_renk} Sistem CPU", value=f"%{cpu_toplam:.1f}",
+              delta=f"{cpu_cekirdek} fiziksel çekirdek")
+with col5:
+    st.metric(label="⚙️ Projenin CPU", value=f"%{proje_cpu:.1f}")
+    
 st.markdown("##### 🌐 Ağ & Sistem Sağlığı")
 n1, n2, n3, n4 = st.columns(4)
 n1.metric(label="🌐 İnternet", value=f"{internet_renk} {internet_yazi}")
@@ -1044,7 +1069,7 @@ if latest_job:
     # 1. BÖLÜM: SAATLİK HIZ GRAFİĞİ
     st.subheader("⏱️ Saat Bazlı Tarama Performansı")
     try:
-        sinir = datetime.now(timezone.utc) - timedelta(hours=48)
+        sinir = datetime.now(timezone.utc) - timedelta(days=30)
         tum_jobs = list(db.jobs.find(
             {"start_time": {"$gte": sinir}},
             {"hourly_stats": 1, "start_time": 1}
@@ -1157,12 +1182,13 @@ if latest_job:
     st.subheader("🛡️ Proxy İstihbarat Merkezi")
 
     try:
-        son_log = db["proxy_logs"].find_one(sort=[("ts", -1)])
+        proxy_stats = db["bot_commands"].find_one({"bot_id": "proxy_stats"})
+        son_log = proxy_stats
         if son_log:
-            son_guncelleme = son_log.get("ts")
+            son_guncelleme = son_log.get("son_guncelleme") or son_log.get("updated_at")
             if son_guncelleme:
                 gecen_sn = (datetime.now(timezone.utc) - son_guncelleme.replace(tzinfo=timezone.utc)).total_seconds()
-                interval = 3600  # extensions.py'daki interval ile aynı
+                interval = 900  # extensions.py'daki interval ile aynı
                 kalan_sn = max(0, interval - gecen_sn)
                 kalan_dk = int(kalan_sn // 60)
                 kalan_s  = int(kalan_sn % 60)
@@ -1230,7 +1256,7 @@ if latest_job:
     with p2:
         st.markdown("#### 📈 Proxy Performans Analizi (Top 10)")
         try:
-            perf = list(db["proxy_performance"].find().sort("ban_count", -1).limit(10))
+            perf = list(db["proxy_performance"].find({"retired": False}).sort("success_count", -1).limit(10))
             if perf:
                 df_p = pd.DataFrame(perf)
                 if "proxy" in df_p.columns:
@@ -1254,10 +1280,6 @@ if latest_job:
                 # Renklendirme yapmadan düz tablo olarak bas (Daha güvenli)
                 st.dataframe(df_goster, width='stretch', hide_index=True)
                 
-                # Emeklilik Uyarısı (Madde 20)
-                emekli_sayisi = int(df_p["retired"].sum())
-                if emekli_sayisi > 0:
-                    st.warning(f"⚠️ {emekli_sayisi} proxy emekliye ayrıldı (10+ ban)")
             else:
                 st.info("🕐 Bot henüz çalışmadı, proxy verisi bekleniyor...")
                 

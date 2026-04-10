@@ -275,6 +275,14 @@ class TrendyolSpider(scrapy.Spider):
     # Urun verilerini cektigimiz ana fonksiyon
     def parse_items(self, response):
         self.current_page = response.meta.get("page_number", 1)
+        # MongoDB'ye current_page yaz
+        try:
+            self._db.jobs.update_one(
+                {"job_id": self.job_id},
+                {"$set": {"current_page": self.current_page}}
+            )
+        except:
+            pass
         loader = ItemLoader(item=TrendyolBotItem(), response=response)
         loader.add_value("url", response.url)
 
@@ -312,11 +320,9 @@ class TrendyolSpider(scrapy.Spider):
     # category özgü yapıldı saçma çıktılar tekrar eden çıktıları burada hallettik
     def _load_categories(self, loader, response, json_data):
         raw_categories = response.css(SELECTORS["category"]).getall()
-        
         if not raw_categories and json_data and json_data.get("category"):
             cat_data = json_data.get("category")
             raw_categories = cat_data if isinstance(cat_data, list) else [cat_data]
-
         if raw_categories:
             clean_categories = []
             seen = set()
@@ -325,10 +331,14 @@ class TrendyolSpider(scrapy.Spider):
                 if stripped_cat and stripped_cat.lower() not in seen:
                     clean_categories.append(stripped_cat)
                     seen.add(stripped_cat.lower())
-            
             final_categories = clean_categories[:4]
             if final_categories:
                 loader.add_value("category", " > ".join(final_categories))
+                return
+        # YENİ FALLBACK: category_name meta'dan al (URL'deki kategori)
+        category_name = response.meta.get("category_name", "")
+        if category_name:
+            loader.add_value("category", category_name)
 
     # JSON-LD verisi varsa buradan çekmeye çalışırız. Bu genellikle daha temiz ve düzenli veri sağlar.
     def _load_from_json(self, loader, data):
