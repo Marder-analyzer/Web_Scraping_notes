@@ -335,7 +335,7 @@ def check_cpu_temp():
             if "nvme" in satir.lower():
                 nvme_bolge = True
             if nvme_bolge:
-                eslesen = re.findall(r'\+([\d.]+)\s*C', satir)
+                eslesen = re.findall(r'\+([\d.]+)\s*°?\s*C', satir)
                 if eslesen:
                     ssd_degerler.append(float(eslesen[0]))
             if nvme_bolge and satir.strip() == "" and ssd_degerler:
