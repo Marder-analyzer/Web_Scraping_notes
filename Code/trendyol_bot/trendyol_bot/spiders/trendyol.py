@@ -105,7 +105,7 @@ class TrendyolSpider(scrapy.Spider):
         key = self._page_key(category, page)
         return self._visited_col.count_documents({"key": key, "status": "done"}, limit=1) > 0
 
-    def _mark_visited(self, category: str, page: int):
+    def _mark_visited(self, category: str, page: int, urun_sayisi: int = 0):
         key = self._page_key(category, page)
         try:
             self._visited_col.update_one(
@@ -114,6 +114,7 @@ class TrendyolSpider(scrapy.Spider):
                     "category": category,
                     "page": page,
                     "status": "done",
+                    "urun_sayisi": urun_sayisi,
                     "ts": datetime.now(timezone.utc),
                 }},
                 upsert=True
@@ -145,7 +146,29 @@ class TrendyolSpider(scrapy.Spider):
             
             # Her arama linkinden ortalama kaç ürün kazıyacağını tahmin ediyoruz.
             # Şimdilik 1 tam sayfa (24 ürün) olarak baz alıyoruz. İstediğin gibi değiştirebilirsin.
-            tahmini_urun_hedefi = toplam_kombinasyon * 24 
+            try:
+                pipeline = [
+                    {"$group": {
+                        "_id": None,
+                        
+                        "toplam_urun": {"$sum": {"$ifNull": ["$urun_sayisi", 0]}},
+                        "toplam_sayfa": {"$sum": 1},
+                        
+                        "bos_sayfa": {"$sum": {"$cond": [{"$in": ["$urun_sayisi", [0, None]]}, 1, 0]}}
+                    }}
+                ]
+                sonuc = list(self._visited_col.aggregate(pipeline))
+                if sonuc and sonuc[0]["toplam_sayfa"] > 50:  # Yeterli veri varsa gerçek ortalamayı kullan
+                    s = sonuc[0]
+                    dolu_sayfa = s["toplam_sayfa"] - s["bos_sayfa"]
+                    gercek_ort = s["toplam_urun"] / dolu_sayfa if dolu_sayfa > 0 else 0
+                    bos_oran   = s["bos_sayfa"] / s["toplam_sayfa"]
+                    dolu_kombinasyon = toplam_kombinasyon * (1 - bos_oran)
+                    tahmini_urun_hedefi = int(dolu_kombinasyon * gercek_ort)
+                else:
+                    tahmini_urun_hedefi = toplam_kombinasyon * 24  # Yeterli veri yoksa varsayılan
+            except:
+                tahmini_urun_hedefi = toplam_kombinasyon * 24 
             
             
             # En son başlatılan oturumu (Job) bul ve tahmini ürün hedefini kaydet
@@ -249,7 +272,8 @@ class TrendyolSpider(scrapy.Spider):
         
         if not links:
             self.logger.info(f"==> [SAYFA {current_page}] Bitti (link yok) | {category_name}")
-            self._mark_visited(category_name, current_page)
+            self._mark_visited(category_name, current_page, urun_sayisi=0)
+
             return
 
         self.logger.info(f"==> [SAYFA {current_page}] Tamamlandi | {len(links)} Urun Havuza Atildi | {category_name}")
@@ -270,7 +294,8 @@ class TrendyolSpider(scrapy.Spider):
                 callback=self.parse_items,
                 errback=self.handle_error
             )
-        self._mark_visited(category_name, current_page)
+        self._mark_visited(category_name, current_page, urun_sayisi=len(links))
+
 
         next_page = current_page + 1
         
@@ -339,11 +364,19 @@ class TrendyolSpider(scrapy.Spider):
             breadcrumb = json_data.get("breadcrumb", {})
             items = breadcrumb.get("itemListElement", []) if breadcrumb else []
             if items:
-                raw_categories = [
-                    el["item"]["name"].strip()
-                    for el in sorted(items, key=lambda x: x.get("position", 0))
-                    if el.get("item", {}).get("name") and el["item"]["name"].strip() != "Trendyol"
-                ]
+                
+                raw_categories = []
+                for el in sorted(items, key=lambda x: x.get("position", 0)):
+                    try:
+                        item = el.get("item", {})
+                        if not isinstance(item, dict):
+                            continue
+                        name = item.get("name", "").strip()
+                        if name and name != "Trendyol":
+                            raw_categories.append(name)
+                    except:
+                        continue
+                
         if not raw_categories and json_data and json_data.get("category"):
             cat_data = json_data.get("category")
             raw_categories = cat_data if isinstance(cat_data, list) else [cat_data]
@@ -525,7 +558,8 @@ class TrendyolSpider(scrapy.Spider):
                     meta = failure.request.meta
                     self._mark_visited(
                         meta.get("category_name", request_url),
-                        meta.get("page_number", 1)
+                        meta.get("page_number", 1),
+                        urun_sayisi=0
                     )
                 return
             elif response.status == 403:
